@@ -1,0 +1,15 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+httpx==0.25.0
+pydantic==2.5.0
+python-dotenv==1.0.0
+torch==2.1.0
+transformers==4.35.0
+datasets==2.14.0
+axolotl==0.4.0
+ollama==0.1.7
+pytest==7.4.3
+pytest-asyncio==0.21.0
+black==23.10.0
+ruff==0.1.6
+mypy==1.6.0

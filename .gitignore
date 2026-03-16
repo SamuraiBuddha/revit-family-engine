@@ -1,0 +1,55 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+env/
+
+# Training output
+output/*.json
+output/*.jsonl
+output/prepared/
+output/checkpoint*/
+!output/.gitkeep
+
+# Model weights
+*.gguf
+*.bin
+*.safetensors
+*.pt
+*.pth
+.cache/
+hf_cache/
+
+# Runtime
+.rfe-port
+
+# C# build
+addin/bin/
+addin/obj/
+*.user
+*.suo
+.vs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pytest / lint
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# env
+.env
+.env.local
+*.log

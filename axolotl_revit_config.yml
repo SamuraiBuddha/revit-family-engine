@@ -1,0 +1,61 @@
+base_model: Qwen/Qwen2.5-Coder-32B-Instruct
+model_type: AutoModelForCausalLM
+tokenizer_type: AutoTokenizer
+trust_remote_code: true
+
+# QLoRA - 4-bit to fit 32B in ~24GB VRAM
+load_in_4bit: true
+adapter: qlora
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+datasets:
+  - path: output/revit_training_data.json
+    type: alpaca
+    ds_type: json
+val_set_size: 0.05
+dataset_prepared_path: output/prepared
+
+# Longer sequences than SWSE - Revit family code tends to be verbose
+sequence_len: 4096
+sample_packing: true
+pad_to_sequence_len: true
+
+micro_batch_size: 1
+gradient_accumulation_steps: 16
+num_epochs: 3
+optimizer: adamw_torch_4bit
+lr_scheduler: cosine
+# Lower LR than SWSE 7B - larger model is more sensitive
+learning_rate: 1e-4
+warmup_steps: 100
+weight_decay: 0.01
+
+train_on_inputs: false
+group_by_length: false
+
+bf16: true
+tf32: true
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+flash_attention: true
+
+logging_steps: 10
+evals_per_epoch: 4
+saves_per_epoch: 1
+save_total_limit: 3
+
+seed: 42
+
+special_tokens:
+  pad_token: "<|endoftext|>"
