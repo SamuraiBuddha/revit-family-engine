@@ -87,7 +87,7 @@ hundreds of C# training pairs via Cartesian product.
 Predefined spaces: `wall_family`, `door_family`, `column_family`, `window_family`, `extrusion_solid`
 
 ### Key Config Files
-- `axolotl_revit_config.yml` -- Qwen2.5-Coder-32B, lora_r=32, lr=1e-4, seq_len=4096
+- `axolotl_revit_config.yml` -- Qwen3-Coder-30B (MoE, 30.5B total / ~3B active), lora_r=32, lr=1e-4, seq_len=4096
 - `Modelfile` -- Ollama model definition with Revit-specific system prompt
 
 ## Extending

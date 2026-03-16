@@ -31,7 +31,7 @@ def _detect_port() -> int | None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    model = os.environ.get("RFE_MODEL", "revit-family-32b")
+    model = os.environ.get("RFE_MODEL", "revit-family-30b")
     ollama_url = os.environ.get("RFE_OLLAMA_URL", "http://localhost:11434")
     backend = OllamaBackend(model_name=model, base_url=ollama_url)
     app.state.ollama = backend

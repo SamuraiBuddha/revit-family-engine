@@ -83,7 +83,7 @@ _CSHARP_SIGNALS = [
 class OllamaBackend:
     def __init__(
         self,
-        model_name: str = "revit-family-32b",
+        model_name: str = "revit-family-30b",
         base_url: str = "http://localhost:11434",
         timeout: float = 120.0,
     ) -> None:

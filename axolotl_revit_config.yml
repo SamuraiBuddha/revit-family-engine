@@ -1,9 +1,10 @@
-base_model: Qwen/Qwen2.5-Coder-32B-Instruct
+base_model: Qwen/Qwen3-Coder-30B-Instruct
 model_type: AutoModelForCausalLM
 tokenizer_type: AutoTokenizer
 trust_remote_code: true
 
-# QLoRA - 4-bit to fit 32B in ~24GB VRAM
+# QLoRA - 4-bit; Qwen3-Coder-30B is MoE (30.5B total, ~3B active params)
+# Lower effective parameter count means lighter VRAM than a dense 30B model
 load_in_4bit: true
 adapter: qlora
 lora_r: 32
