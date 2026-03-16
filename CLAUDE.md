@@ -4,11 +4,14 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-**Revit Family Engine (RFE)** -- a fine-tuned LLM system for AI-powered Revit family creation in C#. Three-tier architecture:
+**Revit Family Engine (RFE)** -- AI-powered Revit family creation in C#. Three-tier architecture:
 
 1. **Revit C#/.NET Add-in** (`addin/`) -- IExternalApplication add-in with ribbon commands, communicates with backend via HTTP
 2. **FastAPI Backend** (`backend/`, port 8001) -- routes prompts to Ollama, resolves parameter spaces
-3. **Ollama Local LLM** -- fine-tuned Qwen2.5-Coder-32B via QLoRA/Axolotl
+3. **Ollama Local LLM** -- Qwen3-Coder-30B (MoE, 262K context), optionally fine-tuned via Unsloth/QLoRA
+
+Fine-tuning is optional: Qwen3-Coder-30B has strong Revit API knowledge out-of-box.
+Try the model as-is first; fine-tune only if quality gaps appear in specific domains.
 
 All inference runs locally. No cloud dependency.
 
@@ -45,11 +48,17 @@ cd .. && uvicorn backend.main:app --reload --port 8001
 python training_pipeline/run_pipeline.py --output-dir output --format alpaca
 ```
 
-### Fine-tuning & Deployment
+### Deploy (try this first -- no fine-tuning needed)
 ```bash
-axolotl train axolotl_revit_config.yml
-python -m axolotl.cli.merge_lora axolotl_revit_config.yml
-ollama create revit-family-32b --modelfile Modelfile
+ollama create revit-family-30b --modelfile Modelfile
+```
+
+### Fine-tuning (optional -- only if quality gaps appear)
+Prefer Unsloth over Axolotl for Qwen3 MoE architecture:
+```bash
+# pip install unsloth
+# python training_pipeline/finetune_unsloth.py  (to be written when needed)
+# axolotl_revit_config.yml retained for reference only
 ```
 
 ### Testing
