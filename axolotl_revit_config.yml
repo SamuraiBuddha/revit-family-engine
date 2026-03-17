@@ -1,4 +1,8 @@
-base_model: Qwen/Qwen3-Coder-30B-Instruct
+# Base model - cached locally at ~/.cache/huggingface/hub after first download
+# Nothing is pushed to HuggingFace Hub; hub_push is disabled below
+# Qwen3-8B = dense 8B, safe on 24GB VRAM with display adapter overhead
+# Switch to Qwen/Qwen3-30B-A3B on bare-metal Linux (no display adapter sharing)
+base_model: Qwen/Qwen3-8B
 model_type: AutoModelForCausalLM
 tokenizer_type: AutoTokenizer
 trust_remote_code: true
@@ -6,9 +10,12 @@ trust_remote_code: true
 # QLoRA - 4-bit; Qwen3-Coder-30B is MoE (30.5B total, ~3B active params)
 # Lower effective parameter count means lighter VRAM than a dense 30B model
 load_in_4bit: true
+bnb_4bit_use_double_quant: true
+bnb_4bit_quant_type: nf4
+bnb_4bit_compute_dtype: bfloat16
 adapter: qlora
-lora_r: 32
-lora_alpha: 64
+lora_r: 16
+lora_alpha: 32
 lora_dropout: 0.05
 lora_target_modules:
   - q_proj
@@ -19,44 +26,64 @@ lora_target_modules:
   - up_proj
   - down_proj
 
+# WSL2 native filesystem paths (fast I/O)
 datasets:
-  - path: output/revit_training_data.json
+  - path: /root/revit-training/data/revit_training_data.json
     type: alpaca
     ds_type: json
-val_set_size: 0.05
-dataset_prepared_path: output/prepared
+val_set_size: 0.02
+dataset_prepared_path: /root/revit-training/data/prepared
+output_dir: /root/revit-training/output/revit-qwen3-coder-qlora
 
 # Longer sequences than SWSE - Revit family code tends to be verbose
-sequence_len: 4096
+sequence_len: 2048
 sample_packing: true
-pad_to_sequence_len: true
+pad_to_sequence_len: false
 
 micro_batch_size: 1
 gradient_accumulation_steps: 16
 num_epochs: 3
-optimizer: adamw_torch_4bit
+optimizer: adamw_bnb_8bit
 lr_scheduler: cosine
 # Lower LR than SWSE 7B - larger model is more sensitive
 learning_rate: 1e-4
-warmup_steps: 100
+warmup_steps: 20
 weight_decay: 0.01
+max_grad_norm: 1.0
 
 train_on_inputs: false
 group_by_length: false
 
 bf16: true
-tf32: true
+fp16: false
+tf32: false
 gradient_checkpointing: true
 gradient_checkpointing_kwargs:
   use_reentrant: false
 flash_attention: true
 
-logging_steps: 10
-evals_per_epoch: 4
+logging_steps: 5
+eval_steps: 50
 saves_per_epoch: 1
 save_total_limit: 3
+eval_sample_packing: false
 
 seed: 42
+
+# Local only - no external reporting
+hub_model_id: null
+hub_strategy: "end"
+push_to_hub: false
+use_wandb: false
+use_mlflow: false
+use_tensorboard: false
+
+chat_template: chatml
+default_system_prompt: >
+  You are an expert Revit API developer specializing in family creation,
+  parameter management, and Dynamo scripting. Generate correct, production-quality
+  C# code using proper Transaction patterns, MM_TO_FT unit conversions (1.0/304.8),
+  and FamilyManager API patterns.
 
 special_tokens:
   pad_token: "<|endoftext|>"
