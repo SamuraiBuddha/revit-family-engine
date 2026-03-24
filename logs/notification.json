@@ -238,5 +238,29 @@
     "hook_event_name": "Notification",
     "message": "Claude is waiting for your input",
     "notification_type": "idle_prompt"
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "hook_event_name": "Notification",
+    "message": "Claude Code login successful",
+    "notification_type": "auth_success"
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "hook_event_name": "Notification",
+    "message": "Claude is waiting for your input",
+    "notification_type": "idle_prompt"
+  },
+  {
+    "session_id": "e7bd3d6f-21a0-4927-af47-7c349bca287b",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub-revit-family-engine\\e7bd3d6f-21a0-4927-af47-7c349bca287b.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "hook_event_name": "Notification",
+    "message": "Claude is waiting for your input",
+    "notification_type": "idle_prompt"
   }
 ]

@@ -350,5 +350,53 @@
     "permission_mode": "bypassPermissions",
     "hook_event_name": "UserPromptSubmit",
     "prompt": "yes please"
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "i have a sample project open and the mcp is connected"
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "keep going"
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "yes, give this sample project a try"
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "yes please commit and push"
+  },
+  {
+    "session_id": "e7bd3d6f-21a0-4927-af47-7c349bca287b",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub-revit-family-engine\\e7bd3d6f-21a0-4927-af47-7c349bca287b.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "can you make the combined gguf in /output and put it on //lilith/tank/development?"
+  },
+  {
+    "session_id": "e7bd3d6f-21a0-4927-af47-7c349bca287b",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub-revit-family-engine\\e7bd3d6f-21a0-4927-af47-7c349bca287b.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "sub folderr"
   }
 ]
