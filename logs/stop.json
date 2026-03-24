@@ -268,5 +268,14 @@
     "hook_event_name": "Stop",
     "stop_hook_active": false,
     "last_assistant_message": "It's running! Training is actively in progress:\n\n- **2,349 train / 124 eval** samples loaded\n- **3 epochs, 441 total steps**\n- **Batch size 16** (1 x 16 gradient accumulation)\n- **843M trainable params** (2.69% of 31.4B total) -- that's the LoRA adapter on the MoE experts\n- 128 MoE experts detected, LoRA targeting `mlp.experts.gate_up_proj` and `mlp.experts.down_proj`\n\nIt's training now. At ~2-3 sec/step on your 3090, this should take roughly **15-20 minutes** for 441 steps. I'll check back when it finishes."
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false,
+    "last_assistant_message": "Checkpoint dir exists but is empty (no epoch saved yet). The GPU is pegged at 82% and 24.2GB -- it's training but very slowly because it's memory-constrained and running without Flash Attention (FA2 = False in the logs). With gradient checkpointing recomputing activations and near-full VRAM, each step is likely taking 30-60 seconds instead of 2-3.\n\nAt ~45 sec/step x 441 steps = ~5.5 hours total. It started around 11:03 AM, so it should finish in roughly another 1-2 hours.\n\nThe training is progressing -- GPU is fully engaged. It's just slower than estimated because the 3090 is at its absolute memory limit with this model. Want to let it keep running?"
   }
 ]
