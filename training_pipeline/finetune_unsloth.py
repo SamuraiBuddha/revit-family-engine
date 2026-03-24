@@ -1,9 +1,9 @@
-"""Fine-tune Qwen3-Coder-30B-Instruct on Revit Family Engine data using Unsloth QLoRA."""
+"""Fine-tune Qwen2.5-Coder-7B-Instruct on Revit Family Engine data using Unsloth QLoRA."""
 
 from __future__ import annotations
 
 import os
-os.environ["TORCHDYNAMO_DISABLE"] = "1"  # Disable torch.compile (Triton JIT needs CUDA dev toolkit)
+os.environ["TORCHDYNAMO_DISABLE"] = "1"
 
 import unsloth  # Must be imported first for optimizations
 import json
@@ -14,12 +14,12 @@ from trl import SFTTrainer
 from unsloth import FastLanguageModel
 
 # ---------------------------------------------------------------------------
-# Model
+# Model -- Qwen2.5-Coder-7B fits comfortably on RTX 3090 (24GB)
 # ---------------------------------------------------------------------------
 
 model, tokenizer = FastLanguageModel.from_pretrained(
-    model_name="unsloth/Qwen3-Coder-30B-A3B-Instruct",
-    max_seq_length=2048,
+    model_name="unsloth/Qwen2.5-Coder-7B-Instruct",
+    max_seq_length=4096,
     load_in_4bit=True,
     dtype=None,  # auto-detect (bf16 on Ampere+)
 )
@@ -28,7 +28,7 @@ model = FastLanguageModel.get_peft_model(
     model,
     r=16,
     lora_alpha=32,
-    lora_dropout=0,
+    lora_dropout=0.05,
     target_modules=[
         "q_proj", "k_proj", "v_proj", "o_proj",
         "gate_proj", "up_proj", "down_proj",
@@ -91,16 +91,16 @@ trainer = SFTTrainer(
     train_dataset=dataset["train"],
     eval_dataset=dataset["test"],
     dataset_text_field="text",
-    max_seq_length=2048,
+    max_seq_length=4096,
     packing=True,
     args=TrainingArguments(
         output_dir="/workspace/data/revit-lora-checkpoints",
-        per_device_train_batch_size=1,
-        gradient_accumulation_steps=16,
+        per_device_train_batch_size=2,
+        gradient_accumulation_steps=8,
         num_train_epochs=3,
-        learning_rate=5e-5,
+        learning_rate=1e-4,
         lr_scheduler_type="cosine",
-        warmup_steps=100,
+        warmup_steps=50,
         weight_decay=0.01,
         bf16=True,
         tf32=True,
@@ -120,7 +120,7 @@ trainer.train()
 # Save
 # ---------------------------------------------------------------------------
 
-# Save LoRA adapter (small, ~100MB)
+# Save LoRA adapter (small, ~50MB)
 model.save_pretrained("/workspace/data/revit-lora-adapter")
 tokenizer.save_pretrained("/workspace/data/revit-lora-adapter")
 print("[OK] LoRA adapter saved to /workspace/data/revit-lora-adapter")
@@ -134,4 +134,4 @@ model.save_pretrained_gguf(
 print("[OK] GGUF model saved to /workspace/data/revit-lora-gguf")
 
 print("\n[DONE] To create the Ollama model, run:")
-print("  ollama create revit-family-30b-ft -f Modelfile.finetune")
+print("  ollama create revit-family-7b-ft -f Modelfile.finetune")

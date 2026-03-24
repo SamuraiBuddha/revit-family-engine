@@ -7,11 +7,10 @@ venv/
 .venv/
 env/
 
-# Training output
-output/*.json
-output/*.jsonl
+# Training output (keep training data, ignore artifacts)
 output/prepared/
 output/checkpoint*/
+output/revit-lora-*/
 !output/.gitkeep
 
 # Model weights
