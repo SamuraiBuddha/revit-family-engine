@@ -27,6 +27,8 @@ from training_pipeline.generators.structural_family_generator import StructuralF
 from training_pipeline.generators.advanced_family_generator import AdvancedFamilyGenerator
 from training_pipeline.generators.wall_family_generator import WallFamilyGenerator
 from training_pipeline.generators.revit_api_reference_generator import RevitAPIReferenceGenerator
+from training_pipeline.generators.building_code_compliance_generator import BuildingCodeComplianceGenerator
+from training_pipeline.generators.mep_family_generator import MEPFamilyGenerator
 from training_pipeline.parameterization_data_generator import ParameterizationDataGenerator
 
 logger = logging.getLogger(__name__)
@@ -34,24 +36,6 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 
 SAMPLE = Dict[str, Any]
 
-
-# ---------------------------------------------------------------------------
-# Generator stubs (to be fully implemented)
-# ---------------------------------------------------------------------------
-
-
-class BuildingCodeComplianceGenerator:
-    """IBC/NFPA compliance validation code."""
-    def generate(self) -> List[SAMPLE]:
-        return []  # stub
-
-
-
-
-class MEPFamilyGenerator:
-    """MEP connector families (pipe, duct, conduit)."""
-    def generate(self) -> List[SAMPLE]:
-        return []  # stub
 
 
 # ---------------------------------------------------------------------------

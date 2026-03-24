@@ -1,0 +1,28 @@
+services:
+  train:
+    build:
+      context: .
+      dockerfile: Dockerfile.train
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - LIBRARY_PATH=/usr/local/cuda-12.8/compat:${LIBRARY_PATH:-}
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      # Uncomment and set if HuggingFace gated model access is needed:
+      # - HF_TOKEN=hf_xxxxx
+    volumes:
+      - ./output:/workspace/data
+      - ./training_pipeline:/workspace/training_pipeline
+      - hf_cache:/home/unsloth/.cache/huggingface
+    entrypoint: ["python3"]
+    command: ["/workspace/training_pipeline/finetune_unsloth.py"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  hf_cache:

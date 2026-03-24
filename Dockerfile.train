@@ -1,0 +1,3 @@
+FROM unsloth/unsloth:latest
+
+WORKDIR /workspace
