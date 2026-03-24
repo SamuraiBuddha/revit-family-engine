@@ -1206,5 +1206,32 @@
       "run_in_background": true
     },
     "tool_use_id": "toolu_017CeofAzVUR6MojQWuSHkwm"
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "docker compose -f docker-compose.train.yml logs --tail 20 2>&1",
+      "description": "Check 7B training progress"
+    },
+    "tool_use_id": "toolu_014pBXbcdVwcGBrsFJA7gzWa"
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "sleep 60 && docker compose -f docker-compose.train.yml logs --tail 15 2>&1",
+      "timeout": 120000,
+      "description": "Check 7B training after 60s"
+    },
+    "tool_use_id": "toolu_0189Vs89MdkGEMY6YkyexhPZ"
   }
 ]

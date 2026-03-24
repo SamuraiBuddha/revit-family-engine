@@ -277,5 +277,14 @@
     "hook_event_name": "Stop",
     "stop_hook_active": false,
     "last_assistant_message": "Checkpoint dir exists but is empty (no epoch saved yet). The GPU is pegged at 82% and 24.2GB -- it's training but very slowly because it's memory-constrained and running without Flash Attention (FA2 = False in the logs). With gradient checkpointing recomputing activations and near-full VRAM, each step is likely taking 30-60 seconds instead of 2-3.\n\nAt ~45 sec/step x 441 steps = ~5.5 hours total. It started around 11:03 AM, so it should finish in roughly another 1-2 hours.\n\nThe training is progressing -- GPU is fully engaged. It's just slower than estimated because the 3090 is at its absolute memory limit with this model. Want to let it keep running?"
+  },
+  {
+    "session_id": "1fbb5ed5-f144-4e38-bf6e-32aa60311d7c",
+    "transcript_path": "C:\\Users\\JordanEhrig\\.claude\\projects\\C--Users-JordanEhrig-Documents-GitHub\\1fbb5ed5-f144-4e38-bf6e-32aa60311d7c.jsonl",
+    "cwd": "C:\\Users\\JordanEhrig\\Documents\\GitHub\\revit-family-engine",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false,
+    "last_assistant_message": "Done. Here's the summary:\n\n**Committed and pushed:**\n- 2,473 training samples in `output/revit_training_data.json`\n- Updated `.gitignore` to track training data\n- Switched to **Qwen2.5-Coder-7B-Instruct** (from 30B)\n\n**Training config for 7B:**\n- 4-bit QLoRA, r=16, alpha=32, seq_len=4096\n- `batch_size=2`, `grad_accum=8` (effective batch 16)\n- lr=1e-4, 3 epochs\n- VRAM estimate: ~8-10GB (tons of headroom on 3090)\n\nThis should train **much** faster -- probably 5-10 minutes. I'll check when it finishes."
   }
 ]
