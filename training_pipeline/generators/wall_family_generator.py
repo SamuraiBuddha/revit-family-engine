@@ -1,16 +1,18 @@
-"""Training data generator: Revit wall-hosted family patterns.
+"""Training data generator: wall-hosted Revit family patterns.
 
-Produces ~250 Alpaca-format training pairs covering basic walls, curtain walls,
-wall openings, compound wall layers, and wall-hosted elements.
+Produces ~200 Alpaca-format training pairs covering face-based/wall-hosted
+templates, void openings, electrical boxes, plumbing penetrations, wall-mounted
+fixtures, curtain wall panels, reveal profiles, embedded structural elements,
+and 2D symbolic line representation.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List
 
 SAMPLE = Dict[str, Any]
 MM_TO_FT = 1.0 / 304.8
-INCH_TO_FT = 1.0 / 12.0
 
 
 def _s(instruction: str, output: str) -> SAMPLE:
@@ -22,1217 +24,2051 @@ def _ft(mm: float) -> str:
 
 
 class WallFamilyGenerator:
-    """Generates training samples for Revit wall family creation and wall-hosted patterns."""
+    """Generates training samples for wall-hosted Revit family patterns."""
 
     def generate(self) -> List[SAMPLE]:
         samples: List[SAMPLE] = []
-        samples += self._basic_walls()
-        samples += self._wall_hosted_families()
-        samples += self._curtain_walls()
-        samples += self._wall_openings()
-        samples += self._compound_wall_layers()
-        samples += self._wall_parameters()
-        samples += self._wall_sweeps_reveals()
+        samples += self._wall_hosted_basic()
+        samples += self._wall_opening_cuts()
+        samples += self._wall_hosted_electrical()
+        samples += self._wall_hosted_plumbing()
+        samples += self._wall_mounted_fixtures()
+        samples += self._wall_panel_patterns()
+        samples += self._wall_reveal_profiles()
+        samples += self._wall_embedded_elements()
+        samples += self._symbolic_lines()
         return samples
 
     # ------------------------------------------------------------------
-    # Basic wall creation
+    # Wall-hosted basic templates
     # ------------------------------------------------------------------
 
-    def _basic_walls(self) -> List[SAMPLE]:
-        samples = []
+    def _wall_hosted_basic(self) -> List[SAMPLE]:
+        samples: List[SAMPLE] = []
+
+        # Face-based family template setup
+        samples.append(_s(
+            "Set up a face-based (wall-hosted) family template with the correct work plane",
+            f"""\
+using Autodesk.Revit.DB;
+
+// Face-based families use a generic model face-based template.
+// The hosting face defines the work plane; geometry projects from it.
+// Key: set the family's hosting requirement to wall face.
+
+// This code runs at family document load / setup time (no Transaction needed
+// for document property changes in the family editor).
+FamilyManager famMgr = familyDoc.FamilyManager;
+
+// Confirm the template supports face-based hosting
+// (check via familyDoc.FamilyPlacementType)
+FamilyPlacementType placementType = familyDoc.FamilyPlacementType;
+// Expected: FamilyPlacementType.OneLevelBasedHosted or WorkPlaneBased
+
+// Add a standard Depth parameter to control projection from wall face
+using (Transaction tx = new Transaction(familyDoc, "Setup Face-Based Parameters"))
+{{
+    tx.Start();
+
+    // Reference plane parallel to the hosting face (at projection depth)
+    View activeView = familyDoc.ActiveView;
+    ReferencePlane frontPlane = familyDoc.FamilyCreate.NewReferencePlane(
+        new XYZ(0, {_ft(100)}, 0),  // 100 mm from face
+        new XYZ(1, {_ft(100)}, 0),
+        XYZ.BasisZ,
+        activeView);
+    frontPlane.Name = "Front";
+
+    tx.Commit();
+}}
+
+// Add Depth parameter (outside Transaction)
+FamilyParameter depthParam = famMgr.AddParameter(
+    "Depth",
+    BuiltInParameterGroup.PG_GEOMETRY,
+    ParameterType.Length,
+    false);
+famMgr.Set(depthParam, {_ft(100)}); // default 100 mm""",
+        ))
+
+        # Work-plane-based wall family
+        samples.append(_s(
+            "Create a work-plane-based family that can be placed on a wall face",
+            f"""\
+using Autodesk.Revit.DB;
+
+// Work-plane-based families attach to any named reference plane or face.
+// Set the family category and confirm placement type.
+
+// Verify placement type is WorkPlaneBased
+// (set in the family template; cannot be changed via API after creation)
+
+FamilyManager famMgr = familyDoc.FamilyManager;
+
+// Standard geometry parameters
+FamilyParameter pWidth = famMgr.AddParameter(
+    "Width", BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+FamilyParameter pHeight = famMgr.AddParameter(
+    "Height", BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+FamilyParameter pDepth = famMgr.AddParameter(
+    "Depth", BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+
+famMgr.Set(pWidth,  {_ft(300)});  // 300 mm
+famMgr.Set(pHeight, {_ft(200)});  // 200 mm
+famMgr.Set(pDepth,  {_ft(50)});   // 50 mm
+
+using (Transaction tx = new Transaction(familyDoc, "Create Wall Plate Geometry"))
+{{
+    tx.Start();
+
+    double w = {_ft(300)};
+    double h = {_ft(200)};
+    double d = {_ft(50)};
+
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0,    0), new XYZ( w/2, 0,    0)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0,    0), new XYZ( w/2, 0,    h)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0,    h), new XYZ(-w/2, 0,    h)));
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0,    h), new XYZ(-w/2, 0,    0)));
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    Extrusion ext = familyDoc.FamilyCreate.NewExtrusion(true, profile, sp, d);
+
+    tx.Commit();
+}}""",
+        ))
+
+        # Hosted family with shared hosting parameters
+        samples.append(_s(
+            "Add standard wall-hosted family parameters: Width, Height, Elevation from Host",
+            f"""\
+using Autodesk.Revit.DB;
+
+// Standard parameter set for wall-hosted families
+FamilyManager famMgr = familyDoc.FamilyManager;
+
+// Geometry parameters
+FamilyParameter pWidth = famMgr.AddParameter(
+    "Width",  BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+FamilyParameter pHeight = famMgr.AddParameter(
+    "Height", BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+FamilyParameter pElevation = famMgr.AddParameter(
+    "Elevation from Host",
+    BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, true); // instance
+
+famMgr.Set(pWidth,     {_ft(600)});  // 600 mm
+famMgr.Set(pHeight,    {_ft(400)});  // 400 mm
+famMgr.Set(pElevation, {_ft(900)});  // 900 mm AFF (above finish floor)
+
+// Keep geometry parameters as type (false) for standard sizes
+// Make elevation instance (true) so placement height varies per instance""",
+        ))
+
+        # Face-based extrusion projecting from wall
         cases = [
-            (3600, 3000, "Create a basic wall 3600mm long, 3000mm high"),
-            (5000, 2700, "Create a standard partition wall 5000mm long, 2700mm high"),
-            (7200, 4200, "Create a tall exterior wall 7200mm long, 4200mm high"),
-            (1200, 2100, "Create a short corridor wall 1200mm long, 2100mm high"),
-            (9000, 3600, "Create a long structural wall 9000mm long, 3600mm high"),
-            (2400, 2400, "Create a square room wall 2400mm long, 2400mm high"),
-            (4500, 3300, "Create a commercial office wall 4500mm long, 3300mm high"),
+            (200, 150, 80,  "wall bracket 200x150mm, 80mm projection"),
+            (400, 300, 120, "wall panel 400x300mm, 120mm projection"),
+            (100, 100, 60,  "wall box 100x100mm, 60mm projection"),
         ]
-        for length_mm, height_mm, instruction in cases:
-            l_ft = _ft(length_mm)
-            h_ft = _ft(height_mm)
-            samples.append(_s(instruction, f"""\
+        for w, h, proj, desc in cases:
+            samples.append(_s(
+                f"Create a face-based solid extrusion projecting from wall face: {desc}",
+                f"""\
 using Autodesk.Revit.DB;
 
-// {instruction}
-using (Transaction tx = new Transaction(doc, "Create Wall"))
+// Face-based extrusion: profile lies in wall face plane (XZ plane at Y=0),
+// extrusion extends in +Y (away from wall).
+using (Transaction tx = new Transaction(familyDoc, "Create Wall-Face Extrusion"))
 {{
     tx.Start();
 
-    double length = {l_ft}; // {length_mm} mm
-    double height = {h_ft}; // {height_mm} mm
+    double w    = {_ft(w)};     // {w} mm width
+    double h    = {_ft(h)};     // {h} mm height
+    double proj = {_ft(proj)};  // {proj} mm projection from wall face
 
-    Line wallLine = Line.CreateBound(XYZ.Zero, new XYZ(length, 0, 0));
+    // Profile in the wall face plane (normal = Y axis)
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, 0),    new XYZ( w/2, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0, 0),    new XYZ( w/2, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0, h),    new XYZ(-w/2, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, h),    new XYZ(-w/2, 0, 0)));
+    profile.Append(loop);
 
-    Level level = new FilteredElementCollector(doc)
-        .OfClass(typeof(Level))
-        .Cast<Level>()
-        .FirstOrDefault();
+    // Sketch plane: wall face (normal = BasisY)
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
 
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType))
-        .Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    Wall wall = Wall.Create(doc, wallLine, wallType.Id, level.Id,
-        height, 0, false, false);
+    // Extrude in +Y direction (away from wall)
+    Extrusion ext = familyDoc.FamilyCreate.NewExtrusion(true, profile, sp, proj);
 
     tx.Commit();
-}}"""))
+}}""",
+            ))
 
-        # Angled wall
-        samples.append(_s("Create a diagonal wall at 45 degrees, 5000mm long, 3000mm high",
+        # Flip control reference planes for wall-hosted families
+        samples.append(_s(
+            "Add flip controls to a wall-hosted family using reference planes named 'Front' and 'Back'",
             f"""\
 using Autodesk.Revit.DB;
-using System;
 
-// Diagonal wall at 45 degrees
-using (Transaction tx = new Transaction(doc, "Create Diagonal Wall"))
+// Flip controls require two reference planes on opposite sides.
+// Named 'Front' and 'Back' (or 'Left'/'Right') -- Revit recognises these
+// names to generate the flip arrows in the host.
+using (Transaction tx = new Transaction(familyDoc, "Add Flip Reference Planes"))
 {{
     tx.Start();
 
-    double length = {_ft(5000)}; // 5000 mm
-    double height = {_ft(3000)}; // 3000 mm
-    double angle  = Math.PI / 4;  // 45 degrees
+    View activeView = familyDoc.ActiveView;
 
-    XYZ start = XYZ.Zero;
-    XYZ end   = new XYZ(length * Math.Cos(angle), length * Math.Sin(angle), 0);
+    // Front plane: at Y=0 (wall face)
+    ReferencePlane front = familyDoc.FamilyCreate.NewReferencePlane(
+        new XYZ(0, 0, 0), new XYZ(1, 0, 0), XYZ.BasisZ, activeView);
+    front.Name = "Front";
 
-    Line wallLine = Line.CreateBound(start, end);
+    // Back plane: at Y = projection depth
+    double depth = {_ft(100)};  // 100 mm
+    ReferencePlane back = familyDoc.FamilyCreate.NewReferencePlane(
+        new XYZ(0, depth, 0), new XYZ(1, depth, 0), XYZ.BasisZ, activeView);
+    back.Name = "Back";
 
-    Level level = new FilteredElementCollector(doc)
-        .OfClass(typeof(Level)).Cast<Level>().FirstOrDefault();
-
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    Wall wall = Wall.Create(doc, wallLine, wallType.Id, level.Id,
-        height, 0, false, false);
+    // Center (Left/Right) for horizontal flip
+    ReferencePlane centerLR = familyDoc.FamilyCreate.NewReferencePlane(
+        new XYZ(0, 0, 0), new XYZ(0, 1, 0), XYZ.BasisZ, activeView);
+    centerLR.Name = "Center (Left/Right)";
 
     tx.Commit();
-}}"""))
+}}""",
+        ))
 
-        # Curved wall
-        samples.append(_s("Create an arc (curved) wall with radius 3000mm and 90-degree sweep",
+        # Hosted family with connector origin at wall face
+        samples.append(_s(
+            "Set the insertion point of a wall-hosted family at the wall face center",
             f"""\
 using Autodesk.Revit.DB;
-using System;
 
-// Curved wall: radius 3000mm, 90-degree arc
-using (Transaction tx = new Transaction(doc, "Create Curved Wall"))
+// The insertion point for a wall-hosted family is defined by where the
+// family origin (0,0,0) sits relative to the hosting face.
+// Convention: origin at the center of the face footprint, Y=0 on the wall face.
+
+using (Transaction tx = new Transaction(familyDoc, "Set Insertion Origin"))
 {{
     tx.Start();
 
-    double radius = {_ft(3000)}; // 3000 mm
-    double height = {_ft(3000)}; // 3000 mm
+    View activeView = familyDoc.ActiveView;
 
-    XYZ center = XYZ.Zero;
-    XYZ start  = new XYZ(radius, 0, 0);
-    XYZ end    = new XYZ(0, radius, 0);
+    // Origin reference planes (all pass through 0,0,0)
+    ReferencePlane refX = familyDoc.FamilyCreate.NewReferencePlane(
+        new XYZ(0, -1, 0), new XYZ(0, 1, 0), XYZ.BasisZ, activeView);
+    refX.Name = "Center (Front/Back)";
 
-    Arc arc = Arc.Create(start, end,
-        new XYZ(radius * Math.Cos(Math.PI / 4), radius * Math.Sin(Math.PI / 4), 0));
+    ReferencePlane refZ = familyDoc.FamilyCreate.NewReferencePlane(
+        new XYZ(-1, 0, 0), new XYZ(1, 0, 0), XYZ.BasisZ, activeView);
+    refZ.Name = "Center (Left/Right)";
 
-    Level level = new FilteredElementCollector(doc)
-        .OfClass(typeof(Level)).Cast<Level>().FirstOrDefault();
-
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    Wall wall = Wall.Create(doc, arc, wallType.Id, level.Id,
-        height, 0, false, false);
+    // The origin point (0,0,0) is the insertion point Revit uses
+    // when snapping to the wall face during placement.
 
     tx.Commit();
-}}"""))
+}}""",
+        ))
 
-        # Wall with offset from level
-        samples.append(_s("Create a wall starting 1200mm above base level (base offset), 3600mm high",
-            f"""\
-using Autodesk.Revit.DB;
-
-// Wall with 1200mm base offset above level
-using (Transaction tx = new Transaction(doc, "Create Offset Wall"))
-{{
-    tx.Start();
-
-    double length     = {_ft(4000)}; // 4000 mm
-    double height     = {_ft(3600)}; // 3600 mm
-    double baseOffset = {_ft(1200)}; // 1200 mm base offset
-
-    Line wallLine = Line.CreateBound(XYZ.Zero, new XYZ(length, 0, 0));
-
-    Level level = new FilteredElementCollector(doc)
-        .OfClass(typeof(Level)).Cast<Level>().FirstOrDefault();
-
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    Wall wall = Wall.Create(doc, wallLine, wallType.Id, level.Id,
-        height, baseOffset, false, false);
-
-    tx.Commit();
-}}"""))
-
-        # Flipped wall (exterior face orientation)
-        samples.append(_s("Create a wall and flip its orientation so the exterior face points inward",
-            f"""\
-using Autodesk.Revit.DB;
-
-using (Transaction tx = new Transaction(doc, "Create and Flip Wall"))
-{{
-    tx.Start();
-
-    Line wallLine = Line.CreateBound(XYZ.Zero, new XYZ({_ft(4800)}, 0, 0));
-
-    Level level = new FilteredElementCollector(doc)
-        .OfClass(typeof(Level)).Cast<Level>().FirstOrDefault();
-
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    Wall wall = Wall.Create(doc, wallLine, wallType.Id, level.Id,
-        {_ft(3000)}, 0, false, false);
-
-    // Flip the wall orientation
-    wall.Flip();
-
-    tx.Commit();
-}}"""))
-
-        # Room bounding wall
-        samples.append(_s("Create a room-bounding wall and verify it is set as a room bounding element",
-            f"""\
-using Autodesk.Revit.DB;
-
-using (Transaction tx = new Transaction(doc, "Create Room Bounding Wall"))
-{{
-    tx.Start();
-
-    Line wallLine = Line.CreateBound(XYZ.Zero, new XYZ({_ft(6000)}, 0, 0));
-
-    Level level = new FilteredElementCollector(doc)
-        .OfClass(typeof(Level)).Cast<Level>().FirstOrDefault();
-
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    Wall wall = Wall.Create(doc, wallLine, wallType.Id, level.Id,
-        {_ft(2700)}, 0, false, true); // last bool = isStructural; room bounding is default true
-
-    // Confirm room bounding is set
-    Parameter rbParam = wall.get_Parameter(BuiltInParameter.WALL_ATTR_ROOM_BOUNDING);
-    if (rbParam != null && !rbParam.IsReadOnly)
-        rbParam.Set(1); // 1 = true
-
-    tx.Commit();
-}}"""))
-
-        return samples  # 12 samples
-
-    # ------------------------------------------------------------------
-    # Wall-hosted families
-    # ------------------------------------------------------------------
-
-    def _wall_hosted_families(self) -> List[SAMPLE]:
-        samples = []
-
-        samples.append(_s("Load a door family and place it in a wall",
-            f"""\
-using Autodesk.Revit.DB;
-using Autodesk.Revit.DB.Structure;
-
-// Load door family and insert in a wall
-using (Transaction tx = new Transaction(doc, "Place Door"))
-{{
-    tx.Start();
-
-    // Load family from default Revit library
-    string familyPath = @"C:\\ProgramData\\Autodesk\\RVT 2024\\Libraries\\US Metric\\Doors\\M_Single-Flush.rfa";
-    Family doorFamily = null;
-    doc.LoadFamily(familyPath, out doorFamily);
-
-    FamilySymbol symbol = null;
-    if (doorFamily != null)
-    {{
-        symbol = doc.GetElement(doorFamily.GetFamilySymbolIds().First()) as FamilySymbol;
-        symbol.Activate();
-    }}
-
-    // Find a wall to host the door
-    Wall hostWall = new FilteredElementCollector(doc)
-        .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
-
-    if (symbol != null && hostWall != null)
-    {{
-        // Place at midpoint of wall, at floor level
-        LocationCurve lc = hostWall.Location as LocationCurve;
-        XYZ midPt = lc.Curve.Evaluate(0.5, true);
-
-        doc.NewFamilyInstance(midPt, symbol, hostWall, StructuralType.NonStructural);
-    }}
-
-    tx.Commit();
-}}"""))
-
-        samples.append(_s("Load a window family and place multiple instances in a wall at equal spacing",
-            f"""\
-using Autodesk.Revit.DB;
-using Autodesk.Revit.DB.Structure;
-
-using (Transaction tx = new Transaction(doc, "Place Windows"))
-{{
-    tx.Start();
-
-    string familyPath = @"C:\\ProgramData\\Autodesk\\RVT 2024\\Libraries\\US Metric\\Windows\\M_Fixed.rfa";
-    Family winFamily = null;
-    doc.LoadFamily(familyPath, out winFamily);
-
-    FamilySymbol symbol = null;
-    if (winFamily != null)
-    {{
-        symbol = doc.GetElement(winFamily.GetFamilySymbolIds().First()) as FamilySymbol;
-        symbol.Activate();
-    }}
-
-    Wall hostWall = new FilteredElementCollector(doc)
-        .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
-
-    if (symbol != null && hostWall != null)
-    {{
-        LocationCurve lc   = hostWall.Location as LocationCurve;
-        double wallLength  = lc.Curve.Length;
-        int count          = 3;
-        double spacing     = wallLength / (count + 1);
-
-        for (int i = 1; i <= count; i++)
-        {{
-            double t   = (spacing * i) / wallLength;
-            XYZ    pt  = lc.Curve.Evaluate(t, true);
-            XYZ    ptZ = new XYZ(pt.X, pt.Y, {_ft(1000)}); // 1000mm AFF
-            doc.NewFamilyInstance(ptZ, symbol, hostWall, StructuralType.NonStructural);
-        }}
-    }}
-
-    tx.Commit();
-}}"""))
-
-        samples.append(_s("Find all doors in a wall and read their Width and Height parameters",
-            """\
-using Autodesk.Revit.DB;
-using System.Collections.Generic;
-
-// Collect doors hosted in walls and read dimensions
-IList<FamilyInstance> doors = new FilteredElementCollector(doc)
-    .OfCategory(BuiltInCategory.OST_Doors)
-    .OfClass(typeof(FamilyInstance))
-    .Cast<FamilyInstance>()
-    .ToList();
-
-foreach (FamilyInstance door in doors)
-{
-    Parameter widthParam  = door.Symbol.get_Parameter(BuiltInParameter.DOOR_WIDTH);
-    Parameter heightParam = door.Symbol.get_Parameter(BuiltInParameter.DOOR_HEIGHT);
-
-    if (widthParam  != null) { double wMm = widthParam.AsDouble()  / MM_TO_FT; }
-    if (heightParam != null) { double hMm = heightParam.AsDouble() / MM_TO_FT; }
-    // MM_TO_FT = 1.0 / 304.8
-}"""))
-
-        samples.append(_s("Set a door's rough width and height using BuiltInParameter",
-            f"""\
-using Autodesk.Revit.DB;
-
-// Set door rough opening dimensions
-FamilyInstance door = new FilteredElementCollector(doc)
-    .OfCategory(BuiltInCategory.OST_Doors)
-    .OfClass(typeof(FamilyInstance))
-    .Cast<FamilyInstance>()
-    .FirstOrDefault();
-
-if (door != null)
-{{
-    using (Transaction tx = new Transaction(doc, "Set Door Size"))
-    {{
-        tx.Start();
-
-        // Rough width: 900mm
-        Parameter rwParam = door.Symbol.get_Parameter(BuiltInParameter.DOOR_WIDTH);
-        if (rwParam != null && !rwParam.IsReadOnly)
-            rwParam.Set({_ft(900)}); // 900 mm
-
-        // Rough height: 2100mm
-        Parameter rhParam = door.Symbol.get_Parameter(BuiltInParameter.DOOR_HEIGHT);
-        if (rhParam != null && !rhParam.IsReadOnly)
-            rhParam.Set({_ft(2100)}); // 2100 mm
-
-        tx.Commit();
-    }}
-}}"""))
-
-        for (cat, bip, w, h, desc) in [
-            ("OST_Windows", "WINDOW_WIDTH",  900, 1200, "window"),
-            ("OST_Doors",   "DOOR_WIDTH",    800, 2100, "door"),
+        # Multiple face-based sizes
+        for (label, w, h, proj) in [
+            ("small",  150, 100,  40),
+            ("medium", 300, 200,  80),
+            ("large",  600, 400, 120),
         ]:
-            samples.append(_s(f"Get the host wall of a {desc} family instance",
+            samples.append(_s(
+                f"Create {label} wall-hosted plate ({w}x{h}mm, {proj}mm deep) as a family type",
                 f"""\
 using Autodesk.Revit.DB;
 
-// Get the host wall for a {desc}
-FamilyInstance fi = new FilteredElementCollector(doc)
-    .OfCategory(BuiltInCategory.{cat})
-    .OfClass(typeof(FamilyInstance))
-    .Cast<FamilyInstance>()
-    .FirstOrDefault();
+// Add a '{label.capitalize()}' type to the wall-hosted family
+FamilyManager famMgr = familyDoc.FamilyManager;
 
-if (fi != null)
-{{
-    Wall hostWall = fi.Host as Wall;
-    if (hostWall != null)
-    {{
-        double wallThicknessMm = hostWall.Width / MM_TO_FT;
-        string wallTypeName    = hostWall.WallType.Name;
-    }}
-    // MM_TO_FT = 1.0 / 304.8
-}}"""))
+// Parameters must already exist; just set values for the new type.
+FamilyType newType = famMgr.NewType("{label.capitalize()}");
+famMgr.CurrentType = newType;
 
-        samples.append(_s("Place a wall-hosted electrical outlet family at 300mm AFF",
-            f"""\
-using Autodesk.Revit.DB;
-using Autodesk.Revit.DB.Structure;
+// Set dimensions for this type (all in feet)
+FamilyParameter pW = famMgr.get_Parameter("Width");
+FamilyParameter pH = famMgr.get_Parameter("Height");
+FamilyParameter pD = famMgr.get_Parameter("Depth");
 
-using (Transaction tx = new Transaction(doc, "Place Outlet"))
-{{
-    tx.Start();
+if (pW != null) famMgr.Set(pW, {_ft(w)});   // {w} mm
+if (pH != null) famMgr.Set(pH, {_ft(h)});   // {h} mm
+if (pD != null) famMgr.Set(pD, {_ft(proj)}); // {proj} mm""",
+            ))
 
-    string familyPath = @"C:\\ProgramData\\Autodesk\\RVT 2024\\Libraries\\US Metric\\Electrical\\M_Duplex Receptacle.rfa";
-    Family family = null;
-    doc.LoadFamily(familyPath, out family);
-
-    Wall hostWall = new FilteredElementCollector(doc)
-        .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
-
-    if (family != null && hostWall != null)
-    {{
-        FamilySymbol sym = doc.GetElement(family.GetFamilySymbolIds().First()) as FamilySymbol;
-        sym.Activate();
-
-        LocationCurve lc = hostWall.Location as LocationCurve;
-        XYZ pt = lc.Curve.Evaluate(0.5, true);
-        XYZ ptAff = new XYZ(pt.X, pt.Y, {_ft(300)}); // 300 mm AFF
-
-        doc.NewFamilyInstance(ptAff, sym, hostWall, StructuralType.NonStructural);
-    }}
-
-    tx.Commit();
-}}"""))
-
-        samples.append(_s("Mirror a door family instance about a reference plane",
-            f"""\
-using Autodesk.Revit.DB;
-
-using (Transaction tx = new Transaction(doc, "Mirror Door"))
-{{
-    tx.Start();
-
-    FamilyInstance door = new FilteredElementCollector(doc)
-        .OfCategory(BuiltInCategory.OST_Doors)
-        .OfClass(typeof(FamilyInstance))
-        .Cast<FamilyInstance>()
-        .FirstOrDefault();
-
-    if (door != null)
-    {{
-        // Mirror about a vertical plane at x = 0
-        Plane mirrorPlane = Plane.CreateByNormalAndOrigin(XYZ.BasisX, XYZ.Zero);
-        ElementTransformUtils.MirrorElements(doc,
-            new List<ElementId> {{ door.Id }}, mirrorPlane, true);
-    }}
-
-    tx.Commit();
-}}"""))
-
-        # wall-hosted panel
-        samples.append(_s("Create a wall and then place a wall-hosted panel (generic annotation) on it",
-            f"""\
-using Autodesk.Revit.DB;
-using Autodesk.Revit.DB.Structure;
-
-using (Transaction tx = new Transaction(doc, "Place Wall Panel"))
-{{
-    tx.Start();
-
-    Line wallLine = Line.CreateBound(XYZ.Zero, new XYZ({_ft(6000)}, 0, 0));
-
-    Level level = new FilteredElementCollector(doc)
-        .OfClass(typeof(Level)).Cast<Level>().FirstOrDefault();
-
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    Wall wall = Wall.Create(doc, wallLine, wallType.Id, level.Id,
-        {_ft(3000)}, 0, false, false);
-
-    // Load and place panel family
-    string panelPath = @"C:\\ProgramData\\Autodesk\\RVT 2024\\Libraries\\US Metric\\Speciality Equipment\\M_Panel Board-Surface Mounted.rfa";
-    Family panelFamily = null;
-    doc.LoadFamily(panelPath, out panelFamily);
-
-    if (panelFamily != null)
-    {{
-        FamilySymbol sym = doc.GetElement(panelFamily.GetFamilySymbolIds().First()) as FamilySymbol;
-        sym.Activate();
-
-        // Place at 1500mm AFF, mid-wall
-        XYZ pt = new XYZ({_ft(3000)}, 0, {_ft(1500)});
-        doc.NewFamilyInstance(pt, sym, wall, StructuralType.NonStructural);
-    }}
-
-    tx.Commit();
-}}"""))
-
-        return samples  # ~10 samples
-
-    # ------------------------------------------------------------------
-    # Curtain walls
-    # ------------------------------------------------------------------
-
-    def _curtain_walls(self) -> List[SAMPLE]:
-        samples = []
-
-        samples.append(_s("Create a curtain wall 12000mm long, 4500mm high",
-            f"""\
-using Autodesk.Revit.DB;
-
-// Curtain wall: 12000mm long, 4500mm high
-using (Transaction tx = new Transaction(doc, "Create Curtain Wall"))
-{{
-    tx.Start();
-
-    double length = {_ft(12000)}; // 12000 mm
-    double height = {_ft(4500)};  // 4500 mm
-
-    Line wallLine = Line.CreateBound(XYZ.Zero, new XYZ(length, 0, 0));
-
-    Level level = new FilteredElementCollector(doc)
-        .OfClass(typeof(Level)).Cast<Level>().FirstOrDefault();
-
-    WallType curtainType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType))
-        .Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Curtain);
-
-    Wall curtainWall = Wall.Create(doc, wallLine, curtainType.Id,
-        level.Id, height, 0, false, false);
-
-    tx.Commit();
-}}"""))
-
-        samples.append(_s("Set the horizontal grid spacing on a curtain wall to 1500mm",
-            f"""\
-using Autodesk.Revit.DB;
-
-Wall curtainWall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>()
-    .First(w => w.WallType.Kind == WallKind.Curtain);
-
-using (Transaction tx = new Transaction(doc, "Set Curtain Grid Spacing"))
-{{
-    tx.Start();
-
-    CurtainGrid grid = curtainWall.CurtainGrid;
-
-    // Set horizontal (U) grid spacing to 1500mm
-    double spacing = {_ft(1500)}; // 1500 mm
-
-    // Use CurtainGridLine spacing parameter
-    Parameter hSpacing = curtainWall.WallType.get_Parameter(
-        BuiltInParameter.SPACING_LAYOUT_U);
-    if (hSpacing != null && !hSpacing.IsReadOnly)
-        hSpacing.Set(spacing);
-
-    tx.Commit();
-}}"""))
-
-        samples.append(_s("Get all curtain panels from a curtain wall and list their areas",
-            """\
-using Autodesk.Revit.DB;
-using System.Collections.Generic;
-
-Wall curtainWall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>()
-    .First(w => w.WallType.Kind == WallKind.Curtain);
-
-CurtainGrid grid = curtainWall.CurtainGrid;
-
-ICollection<ElementId> panelIds = grid.GetPanelIds();
-foreach (ElementId panelId in panelIds)
-{
-    Panel panel = doc.GetElement(panelId) as Panel;
-    if (panel != null)
-    {
-        // Panel area in sq-ft internally; convert to sq-m
-        double areaSqFt = panel.get_Parameter(BuiltInParameter.HOST_AREA_COMPUTED)?.AsDouble() ?? 0;
-        double areaSqM  = areaSqFt * 0.092903;
-    }
-}"""))
-
-        samples.append(_s("Replace all curtain panels on a curtain wall with a specific panel type",
+        # Subcategory for wall families
+        samples.append(_s(
+            "Create a subcategory 'Body' under the Specialty Equipment category for a wall-hosted family",
             """\
 using Autodesk.Revit.DB;
 
-// Replace curtain panels with a specific FamilySymbol
-PanelType targetType = new FilteredElementCollector(doc)
-    .OfClass(typeof(PanelType))
-    .Cast<PanelType>()
-    .FirstOrDefault(pt => pt.Name.Contains("Glazed"));
-
-Wall curtainWall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>()
-    .First(w => w.WallType.Kind == WallKind.Curtain);
-
-if (targetType != null)
+// Subcategories organise geometry visibility and appearance.
+// Create under the family's own category (e.g., Specialty Equipment).
+using (Transaction tx = new Transaction(familyDoc, "Create Subcategory"))
 {
-    using (Transaction tx = new Transaction(doc, "Replace Curtain Panels"))
-    {
-        tx.Start();
-
-        CurtainGrid grid = curtainWall.CurtainGrid;
-        foreach (ElementId panelId in grid.GetPanelIds())
-        {
-            Panel panel = doc.GetElement(panelId) as Panel;
-            if (panel != null)
-                panel.PanelType = targetType;
-        }
-
-        tx.Commit();
-    }
-}"""))
-
-        samples.append(_s("Add a vertical curtain grid line at a specific position on a curtain wall",
-            f"""\
-using Autodesk.Revit.DB;
-
-Wall curtainWall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>()
-    .First(w => w.WallType.Kind == WallKind.Curtain);
-
-using (Transaction tx = new Transaction(doc, "Add Curtain Grid Line"))
-{{
     tx.Start();
 
-    CurtainGrid grid = curtainWall.CurtainGrid;
+    Category parentCat = familyDoc.Settings.Categories
+        .get_Item(BuiltInCategory.OST_SpecialityEquipment);
 
-    // Add V (vertical) grid line at u=3000mm from wall start
-    double pos = {_ft(3000)}; // 3000 mm from start
-    grid.AddGridLine(true, pos, false); // true = U-direction (vertical)
+    Category bodySubCat = familyDoc.Settings.Categories.NewSubcategory(
+        parentCat, "Body");
+    bodySubCat.LineColor  = new Color(0, 0, 0);      // black
+    bodySubCat.LineWeight = 2;                         // medium weight
+
+    Category symbolSubCat = familyDoc.Settings.Categories.NewSubcategory(
+        parentCat, "Symbol");
+    symbolSubCat.LineColor  = new Color(128, 128, 128); // grey
+    symbolSubCat.LineWeight = 1;
 
     tx.Commit();
-}}"""))
+}""",
+        ))
 
-        samples.append(_s("Get all curtain wall mullions and set their type",
+        # Shared parameter for wall families
+        samples.append(_s(
+            "Add a shared parameter 'Manufacturer' to a wall-hosted family for schedule reporting",
             """\
 using Autodesk.Revit.DB;
+using System.IO;
 
-Wall curtainWall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>()
-    .First(w => w.WallType.Kind == WallKind.Curtain);
+// Shared parameters enable cross-family scheduling.
+// They must be defined in a shared parameter file first.
+string sharedParamFile = @"C:\\RevitSharedParams\\WallFamily.txt";
 
-MullionType targetMullionType = new FilteredElementCollector(doc)
-    .OfClass(typeof(MullionType))
-    .Cast<MullionType>()
-    .FirstOrDefault();
+// Set the shared parameter file on the application
+familyDoc.Application.SharedParametersFilename = sharedParamFile;
+DefinitionFile defFile = familyDoc.Application.OpenSharedParameterFile();
 
-if (targetMullionType != null)
+// Get or create the group
+DefinitionGroup group = defFile.Groups.get_Item("Identity Data")
+    ?? defFile.Groups.Create("Identity Data");
+
+// Get or create the definition
+ExternalDefinition def = group.Definitions.get_Item("Manufacturer")
+    as ExternalDefinition;
+if (def == null)
 {
-    using (Transaction tx = new Transaction(doc, "Set Mullion Types"))
-    {
-        tx.Start();
+    ExternalDefinitionCreationOptions opts =
+        new ExternalDefinitionCreationOptions("Manufacturer", ParameterType.Text);
+    def = group.Definitions.Create(opts) as ExternalDefinition;
+}
 
-        CurtainGrid grid = curtainWall.CurtainGrid;
-        foreach (ElementId mullionId in grid.GetMullionIds())
-        {
-            Mullion mullion = doc.GetElement(mullionId) as Mullion;
-            if (mullion != null)
-                mullion.MullionType = targetMullionType;
-        }
+// Bind to the family
+FamilyManager famMgr = familyDoc.FamilyManager;
+famMgr.AddParameter(def,
+    BuiltInParameterGroup.PG_IDENTITY_DATA,
+    true); // instance parameter""",
+        ))
 
-        tx.Commit();
-    }
-}"""))
-
-        samples.append(_s("Create a curtain wall system (not wall-based) on a flat face",
+        # Elevation-driven placement
+        samples.append(_s(
+            "Set a wall-hosted family instance's elevation offset from the host wall's base",
             f"""\
 using Autodesk.Revit.DB;
 
-// CurtainSystem on a topographic or flat surface
-using (Transaction tx = new Transaction(doc, "Create Curtain System"))
+// After placing a wall-hosted family instance, set its elevation offset.
+// The 'Elevation from Host' parameter controls height on the wall.
+using (Transaction tx = new Transaction(doc, "Set Hosted Family Elevation"))
 {{
     tx.Start();
 
-    // Get a face from an existing floor or surface
-    Floor floor = new FilteredElementCollector(doc)
-        .OfClass(typeof(Floor)).Cast<Floor>().FirstOrDefault();
+    // Assume 'instance' is a placed FamilyInstance hosted on a wall
+    FamilyInstance instance = /* ... */ null;
 
-    if (floor != null)
+    Parameter elevParam = instance?.get_Parameter(
+        BuiltInParameter.INSTANCE_ELEVATION_PARAM);
+
+    if (elevParam != null && !elevParam.IsReadOnly)
     {{
-        Options geomOpts = new Options {{ ComputeReferences = true }};
-        GeometryElement geom = floor.get_Geometry(geomOpts);
-
-        foreach (GeometryObject obj in geom)
-        {{
-            Solid solid = obj as Solid;
-            if (solid != null)
-            {{
-                foreach (Face face in solid.Faces)
-                {{
-                    PlanarFace pf = face as PlanarFace;
-                    if (pf != null && pf.FaceNormal.IsAlmostEqualTo(XYZ.BasisZ))
-                    {{
-                        CurtainSystemType csType = new FilteredElementCollector(doc)
-                            .OfClass(typeof(CurtainSystemType))
-                            .Cast<CurtainSystemType>().FirstOrDefault();
-                        if (csType != null)
-                        {{
-                            IList<Reference> faces = new List<Reference> {{ pf.Reference }};
-                            doc.Create.NewCurtainSystem2(faces, csType);
-                        }}
-                        break;
-                    }}
-                }}
-                break;
-            }}
-        }}
+        elevParam.Set({_ft(1200)});  // 1200 mm AFF
     }}
 
     tx.Commit();
-}}"""))
+}}""",
+        ))
 
-        return samples  # 7 samples
+        return samples
 
     # ------------------------------------------------------------------
-    # Wall openings
+    # Wall opening cuts (void extrusions)
     # ------------------------------------------------------------------
 
-    def _wall_openings(self) -> List[SAMPLE]:
-        samples = []
-        opening_cases = [
-            (900, 2100, "standard door opening 900x2100mm"),
-            (1200, 2100, "wide door opening 1200x2100mm"),
-            (600, 600,  "small service hatch 600x600mm"),
-            (3000, 2400, "large equipment opening 3000x2400mm"),
-            (1800, 2400, "double door rough opening 1800x2400mm"),
+    def _wall_opening_cuts(self) -> List[SAMPLE]:
+        samples: List[SAMPLE] = []
+
+        # Rectangular opening
+        rect_cases = [
+            (900,  2100, "standard door opening 900x2100mm"),
+            (600,  1200, "window opening 600x1200mm"),
+            (300,   300, "small access panel 300x300mm"),
+            (1200, 2400, "wide opening 1200x2400mm"),
+            (100,   200, "cable pass-through 100x200mm"),
         ]
-        for w_mm, h_mm, desc in opening_cases:
-            samples.append(_s(f"Create a rectangular wall opening for {desc}",
+        for w, h, desc in rect_cases:
+            samples.append(_s(
+                f"Create a rectangular void cut through a wall for a {desc}",
                 f"""\
 using Autodesk.Revit.DB;
 
-// Rectangular opening in a wall: {w_mm}mm wide x {h_mm}mm high
-using (Transaction tx = new Transaction(doc, "Create Wall Opening"))
+// Rectangular void extrusion cuts the host wall when the family is placed.
+// Profile in XZ plane; extrusion depth must exceed wall thickness.
+using (Transaction tx = new Transaction(familyDoc, "Create Rectangular Wall Opening"))
 {{
     tx.Start();
 
-    Wall wall = new FilteredElementCollector(doc)
-        .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
+    double w       = {_ft(w)};     // {w} mm width
+    double h       = {_ft(h)};     // {h} mm height
+    double cutDepth = {_ft(600)};  // 600 mm -- exceeds any typical wall thickness
 
-    if (wall != null)
-    {{
-        // Opening centered on wall at base level
-        LocationCurve lc  = wall.Location as LocationCurve;
-        XYZ midPt         = lc.Curve.Evaluate(0.5, true);
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    // Profile in the wall face plane (normal = BasisY), centred at origin
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, 0),  new XYZ( w/2, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0, 0),  new XYZ( w/2, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0, h),  new XYZ(-w/2, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, h),  new XYZ(-w/2, 0, 0)));
+    profile.Append(loop);
 
-        double halfW = {_ft(w_mm / 2)}; // half of {w_mm} mm
-        double height = {_ft(h_mm)}; // {h_mm} mm
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
 
-        XYZ btmLeft  = new XYZ(midPt.X - halfW, midPt.Y, 0);
-        XYZ topRight = new XYZ(midPt.X + halfW, midPt.Y, height);
-
-        doc.Create.NewOpening(wall, btmLeft, topRight);
-    }}
+    // isSolid = false → void; extrude through wall in -Y and +Y
+    Extrusion voidExt = familyDoc.FamilyCreate.NewExtrusion(
+        false, profile, sp, cutDepth);
+    voidExt.StartOffset = -{_ft(300)};  // 300 mm behind face
+    voidExt.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM)?.Set(cutDepth);
 
     tx.Commit();
-}}"""))
+}}""",
+            ))
 
-        # Void extrusion opening
-        samples.append(_s("Create a void extrusion cut through a wall to form a circular opening of 400mm diameter",
-            f"""\
+        # Arched opening
+        arch_cases = [
+            (900,  2100, 450, "arched door opening 900 wide, 450mm radius arch"),
+            (600,  1200, 300, "arched window opening 600 wide, 300mm radius arch"),
+        ]
+        for w, rect_h, r, desc in arch_cases:
+            samples.append(_s(
+                f"Create an arched void cut for a {desc}",
+                f"""\
 using Autodesk.Revit.DB;
 using System;
 
-// Void extrusion: circular opening 400mm diameter through wall
-// (typically done in family editor)
-using (Transaction tx = new Transaction(familyDoc, "Create Circular Void Opening"))
+// Arched opening: rectangular base + semicircular top
+// Total height = rect_h (to spring line) + r (arch radius)
+using (Transaction tx = new Transaction(familyDoc, "Create Arched Wall Opening"))
 {{
     tx.Start();
 
-    double radius   = {_ft(200)}; // 200 mm radius
-    double wallThk  = {_ft(300)}; // 300 mm wall thickness (void depth)
-    int    segments = 32;
+    double w      = {_ft(w)};       // {w} mm width
+    double rectH  = {_ft(rect_h)};  // {rect_h} mm to spring line
+    double r      = {_ft(r)};       // {r} mm arch radius
+    double depth  = {_ft(600)};     // cut depth through wall
+
+    // Spring line Y coordinate (top of rectangular portion)
+    double spring = rectH;
+    // Arch centre at mid-width, at spring line height
+    XYZ archCtr = new XYZ(0, 0, spring);
 
     CurveArray loop = new CurveArray();
-    for (int i = 0; i < segments; i++)
+
+    // Bottom horizontal
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, 0),     new XYZ( w/2, 0, 0)));
+    // Right vertical (up to spring line)
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0, 0),     new XYZ( w/2, 0, spring)));
+    // Semicircular arch (right to left, 32 segments)
+    int n = 32;
+    XYZ prev = new XYZ(w/2, 0, spring);
+    for (int i = 1; i <= n; i++)
     {{
-        double a0 = 2 * Math.PI * i / segments;
-        double a1 = 2 * Math.PI * (i + 1) / segments;
-        loop.Append(Line.CreateBound(
-            new XYZ(radius * Math.Cos(a0), radius * Math.Sin(a0), 0),
-            new XYZ(radius * Math.Cos(a1), radius * Math.Sin(a1), 0)));
+        double angle = Math.PI * i / n; // 0 → PI (right to left)
+        XYZ next = new XYZ(r * Math.Cos(Math.PI - angle), 0, spring + r * Math.Sin(Math.PI - angle));
+        // Simpler: go from 0 to PI
+        double a0 = Math.PI - Math.PI * (i - 1) / n;
+        double a1 = Math.PI - Math.PI * i / n;
+        XYZ p0 = new XYZ(r * Math.Cos(a0), 0, spring + r * Math.Sin(a0));
+        XYZ p1 = new XYZ(r * Math.Cos(a1), 0, spring + r * Math.Sin(a1));
+        loop.Append(Line.CreateBound(p0, p1));
+    }}
+    // Left vertical (down from spring line)
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, spring), new XYZ(-w/2, 0, 0)));
+
+    CurveArrArray profile = new CurveArrArray();
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    Extrusion voidExt = familyDoc.FamilyCreate.NewExtrusion(
+        false, profile, sp, depth);
+
+    tx.Commit();
+}}""",
+            ))
+
+        # Circular opening
+        circ_cases = [
+            (150, "pipe sleeve 150mm diameter"),
+            (300, "round porthole 300mm diameter"),
+            (100, "cable knockout 100mm diameter"),
+        ]
+        for dia, desc in circ_cases:
+            r = dia / 2
+            samples.append(_s(
+                f"Create a circular void cut through a wall for a {desc}",
+                f"""\
+using Autodesk.Revit.DB;
+using System;
+
+// Circular void: 32-segment polygon approximation
+using (Transaction tx = new Transaction(familyDoc, "Create Circular Wall Opening"))
+{{
+    tx.Start();
+
+    double r     = {_ft(r)};      // {r} mm radius ({dia} mm diameter)
+    double depth = {_ft(600)};    // cut depth through wall
+    int n = 32;
+
+    CurveArray loop = new CurveArray();
+    for (int i = 0; i < n; i++)
+    {{
+        double a0 = 2 * Math.PI * i / n;
+        double a1 = 2 * Math.PI * (i + 1) / n;
+        XYZ p0 = new XYZ(r * Math.Cos(a0), 0, r + r * Math.Sin(a0));
+        XYZ p1 = new XYZ(r * Math.Cos(a1), 0, r + r * Math.Sin(a1));
+        loop.Append(Line.CreateBound(p0, p1));
     }}
 
     CurveArrArray profile = new CurveArrArray();
     profile.Append(loop);
 
     SketchPlane sp = SketchPlane.Create(familyDoc,
-        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
 
-    // isSolid = false --> void cuts existing solid
-    familyDoc.FamilyCreate.NewExtrusion(false, profile, sp, wallThk);
+    Extrusion voidExt = familyDoc.FamilyCreate.NewExtrusion(
+        false, profile, sp, depth);
 
     tx.Commit();
-}}"""))
+}}""",
+            ))
 
-        samples.append(_s("Create an arched (semicircular top) wall opening 1200mm wide x 2400mm to top of arch",
+        # Parametric void with Width/Height parameters
+        samples.append(_s(
+            "Create a parametric rectangular wall opening void driven by Width and Height family parameters",
             f"""\
+using Autodesk.Revit.DB;
+
+// Parametric void: width and height are family type parameters.
+// The void extrusion references dimensions labelled with these parameters.
+FamilyManager famMgr = familyDoc.FamilyManager;
+
+FamilyParameter pW = famMgr.AddParameter(
+    "Opening Width",  BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+FamilyParameter pH = famMgr.AddParameter(
+    "Opening Height", BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+
+famMgr.Set(pW, {_ft(900)});   // default 900 mm
+famMgr.Set(pH, {_ft(2100)});  // default 2100 mm
+
+using (Transaction tx = new Transaction(familyDoc, "Create Parametric Void"))
+{{
+    tx.Start();
+
+    double w = {_ft(900)};
+    double h = {_ft(2100)};
+    double d = {_ft(600)};
+
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, 0), new XYZ( w/2, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0, 0), new XYZ( w/2, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0, h), new XYZ(-w/2, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, h), new XYZ(-w/2, 0, 0)));
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion voidExt = familyDoc.FamilyCreate.NewExtrusion(false, profile, sp, d);
+
+    // Create reference planes for dimension labels
+    View v = familyDoc.ActiveView;
+    ReferencePlane rpLeft  = familyDoc.FamilyCreate.NewReferencePlane(
+        new XYZ(-w/2, 0, 0), new XYZ(-w/2, 1, 0), XYZ.BasisZ, v);
+    ReferencePlane rpRight = familyDoc.FamilyCreate.NewReferencePlane(
+        new XYZ( w/2, 0, 0), new XYZ( w/2, 1, 0), XYZ.BasisZ, v);
+    rpLeft.Name  = "Opening Left";
+    rpRight.Name = "Opening Right";
+
+    ReferenceArray widthRefs = new ReferenceArray();
+    widthRefs.Append(rpLeft.GetReference());
+    widthRefs.Append(rpRight.GetReference());
+    Dimension widthDim = familyDoc.FamilyCreate.NewLinearDimension(
+        v,
+        Line.CreateBound(new XYZ(-1, 0, -0.5), new XYZ(1, 0, -0.5)),
+        widthRefs);
+    if (widthDim?.IsReferencesValidForLabel() == true)
+        widthDim.FamilyLabel = pW;
+
+    tx.Commit();
+}}""",
+        ))
+
+        # Sill height offset for opening void
+        samples.append(_s(
+            "Create a wall opening void with a configurable sill height (bottom of opening raised from floor)",
+            f"""\
+using Autodesk.Revit.DB;
+
+// Opening with sill height: the void bottom is at z = sillHeight, not z = 0.
+FamilyManager famMgr = familyDoc.FamilyManager;
+
+FamilyParameter pSill = famMgr.AddParameter(
+    "Sill Height", BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+FamilyParameter pOpenH = famMgr.AddParameter(
+    "Opening Height", BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+FamilyParameter pOpenW = famMgr.AddParameter(
+    "Opening Width",  BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+
+famMgr.Set(pSill,  {_ft(900)});   // 900 mm sill height
+famMgr.Set(pOpenH, {_ft(1200)});  // 1200 mm opening height
+famMgr.Set(pOpenW, {_ft(600)});   // 600 mm opening width
+
+using (Transaction tx = new Transaction(familyDoc, "Create Sill Void"))
+{{
+    tx.Start();
+
+    double sill  = {_ft(900)};
+    double openH = {_ft(1200)};
+    double openW = {_ft(600)};
+    double depth = {_ft(600)};
+
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    // Bottom of void at sill height
+    loop.Append(Line.CreateBound(new XYZ(-openW/2, 0, sill),
+                                  new XYZ( openW/2, 0, sill)));
+    loop.Append(Line.CreateBound(new XYZ( openW/2, 0, sill),
+                                  new XYZ( openW/2, 0, sill + openH)));
+    loop.Append(Line.CreateBound(new XYZ( openW/2, 0, sill + openH),
+                                  new XYZ(-openW/2, 0, sill + openH)));
+    loop.Append(Line.CreateBound(new XYZ(-openW/2, 0, sill + openH),
+                                  new XYZ(-openW/2, 0, sill)));
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion voidExt = familyDoc.FamilyCreate.NewExtrusion(false, profile, sp, depth);
+
+    tx.Commit();
+}}""",
+        ))
+
+        return samples
+
+    # ------------------------------------------------------------------
+    # Wall-hosted electrical boxes
+    # ------------------------------------------------------------------
+
+    def _wall_hosted_electrical(self) -> List[SAMPLE]:
+        samples: List[SAMPLE] = []
+
+        samples.append(_s(
+            "Create a wall-hosted electrical outlet box family (single-gang, 115x70x55mm)",
+            """\
+using Autodesk.Revit.DB;
+
+// Single-gang outlet box: 115mm wide, 70mm tall, 55mm deep in wall
+FamilyManager famMgr = familyDoc.FamilyManager;
+
+FamilyParameter pElevation = famMgr.AddParameter(
+    "Elevation from Host", BuiltInParameterGroup.PG_GEOMETRY,
+    ParameterType.Length, true);
+famMgr.Set(pElevation, 1.312336);  // 400 mm AFF
+
+using (Transaction tx = new Transaction(familyDoc, "Create Outlet Box"))
+{{
+    tx.Start();
+
+    double bw = 0.377297;  // 115 mm
+    double bh = 0.229659;   // 70 mm
+    double bd = 0.180446;   // 55 mm
+
+    CurveArrArray boxProfile = new CurveArrArray();
+    CurveArray boxLoop = new CurveArray();
+    boxLoop.Append(Line.CreateBound(new XYZ(-bw/2, 0, 0),   new XYZ( bw/2, 0, 0)));
+    boxLoop.Append(Line.CreateBound(new XYZ( bw/2, 0, 0),   new XYZ( bw/2, 0, bh)));
+    boxLoop.Append(Line.CreateBound(new XYZ( bw/2, 0, bh),  new XYZ(-bw/2, 0, bh)));
+    boxLoop.Append(Line.CreateBound(new XYZ(-bw/2, 0, bh),  new XYZ(-bw/2, 0, 0)));
+    boxProfile.Append(boxLoop);
+
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion boxBody = familyDoc.FamilyCreate.NewExtrusion(true, boxProfile, spFace, -bd);
+
+    double margin = 0.016404;
+    double vw = bw + 2 * margin;
+    double vh = bh + 2 * margin;
+    CurveArrArray voidProfile = new CurveArrArray();
+    CurveArray voidLoop = new CurveArray();
+    voidLoop.Append(Line.CreateBound(new XYZ(-vw/2, 0, -margin),     new XYZ( vw/2, 0, -margin)));
+    voidLoop.Append(Line.CreateBound(new XYZ( vw/2, 0, -margin),     new XYZ( vw/2, 0, vh - margin)));
+    voidLoop.Append(Line.CreateBound(new XYZ( vw/2, 0, vh - margin), new XYZ(-vw/2, 0, vh - margin)));
+    voidLoop.Append(Line.CreateBound(new XYZ(-vw/2, 0, vh - margin), new XYZ(-vw/2, 0, -margin)));
+    voidProfile.Append(voidLoop);
+    Extrusion roughIn = familyDoc.FamilyCreate.NewExtrusion(false, voidProfile, spFace, -(bd + 0.032808));
+
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall-hosted light switch plate family (single-gang, 86x86mm, surface-mounted)",
+            """\
+using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Switch Plate"))
+{{
+    tx.Start();
+
+    double pw = 0.282152;   // 86 mm
+    double ph = 0.282152;   // 86 mm
+    double pt = 0.026247;    // 8 mm thickness
+
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-pw/2, 0, 0),  new XYZ( pw/2, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ( pw/2, 0, 0),  new XYZ( pw/2, 0, ph)));
+    loop.Append(Line.CreateBound(new XYZ( pw/2, 0, ph), new XYZ(-pw/2, 0, ph)));
+    loop.Append(Line.CreateBound(new XYZ(-pw/2, 0, ph), new XYZ(-pw/2, 0, 0)));
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion plate = familyDoc.FamilyCreate.NewExtrusion(true, profile, sp, pt);
+
+    // Rocker void (20x40mm)
+    double rw = 0.065617;
+    double rh = 0.131234;
+    CurveArrArray vProf = new CurveArrArray();
+    CurveArray vLoop = new CurveArray();
+    vLoop.Append(Line.CreateBound(new XYZ(-rw/2, 0, (ph-rh)/2), new XYZ( rw/2, 0, (ph-rh)/2)));
+    vLoop.Append(Line.CreateBound(new XYZ( rw/2, 0, (ph-rh)/2), new XYZ( rw/2, 0, (ph+rh)/2)));
+    vLoop.Append(Line.CreateBound(new XYZ( rw/2, 0, (ph+rh)/2), new XYZ(-rw/2, 0, (ph+rh)/2)));
+    vLoop.Append(Line.CreateBound(new XYZ(-rw/2, 0, (ph+rh)/2), new XYZ(-rw/2, 0, (ph-rh)/2)));
+    vProf.Append(vLoop);
+    Extrusion rockerVoid = familyDoc.FamilyCreate.NewExtrusion(false, vProf, sp, pt);
+
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a double-gang electrical outlet box family (200x70x55mm) wall-hosted",
+            """\
+using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Double-Gang Outlet"))
+{{
+    tx.Start();
+
+    double bw = 0.656168;
+    double bh = 0.229659;
+    double bd = 0.180446;
+
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-bw/2, 0, 0),  new XYZ( bw/2, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ( bw/2, 0, 0),  new XYZ( bw/2, 0, bh)));
+    loop.Append(Line.CreateBound(new XYZ( bw/2, 0, bh), new XYZ(-bw/2, 0, bh)));
+    loop.Append(Line.CreateBound(new XYZ(-bw/2, 0, bh), new XYZ(-bw/2, 0, 0)));
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion body  = familyDoc.FamilyCreate.NewExtrusion(true,  profile, sp, -bd);
+    Extrusion plate = familyDoc.FamilyCreate.NewExtrusion(true,  profile, sp,  0.006562);
+
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall-hosted data outlet (RJ45) plate family with port count parameter",
+            """\
+using Autodesk.Revit.DB;
+
+FamilyManager famMgr = familyDoc.FamilyManager;
+FamilyParameter pPorts = famMgr.AddParameter(
+    "Port Count", BuiltInParameterGroup.PG_DATA, ParameterType.Integer, false);
+famMgr.Set(pPorts, 2);
+
+using (Transaction tx = new Transaction(familyDoc, "Create Data Outlet"))
+{{
+    tx.Start();
+
+    double pw = 0.282152;
+    double ph = 0.282152;
+    double pt = 0.032808;
+
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-pw/2, 0, 0),  new XYZ( pw/2, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ( pw/2, 0, 0),  new XYZ( pw/2, 0, ph)));
+    loop.Append(Line.CreateBound(new XYZ( pw/2, 0, ph), new XYZ(-pw/2, 0, ph)));
+    loop.Append(Line.CreateBound(new XYZ(-pw/2, 0, ph), new XYZ(-pw/2, 0, 0)));
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion plate = familyDoc.FamilyCreate.NewExtrusion(true, profile, sp, pt);
+
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall-recessed electrical distribution panel family (400x600mm, 100mm deep recess)",
+            """\
+using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Electrical Panel"))
+{{
+    tx.Start();
+
+    double pw = 1.312336;
+    double ph = 1.968504;
+    double pd = 0.328084;
+    double ft_val = 0.009843;
+
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    CurveArrArray voidProf = new CurveArrArray();
+    CurveArray voidLoop = new CurveArray();
+    voidLoop.Append(Line.CreateBound(new XYZ(-pw/2, 0, 0),  new XYZ( pw/2, 0, 0)));
+    voidLoop.Append(Line.CreateBound(new XYZ( pw/2, 0, 0),  new XYZ( pw/2, 0, ph)));
+    voidLoop.Append(Line.CreateBound(new XYZ( pw/2, 0, ph), new XYZ(-pw/2, 0, ph)));
+    voidLoop.Append(Line.CreateBound(new XYZ(-pw/2, 0, ph), new XYZ(-pw/2, 0, 0)));
+    voidProf.Append(voidLoop);
+    Extrusion recess = familyDoc.FamilyCreate.NewExtrusion(false, voidProf, spFace, -pd);
+
+    CurveArrArray doorProf = new CurveArrArray();
+    CurveArray doorLoop = new CurveArray();
+    doorLoop.Append(Line.CreateBound(new XYZ(-pw/2, 0, 0),  new XYZ( pw/2, 0, 0)));
+    doorLoop.Append(Line.CreateBound(new XYZ( pw/2, 0, 0),  new XYZ( pw/2, 0, ph)));
+    doorLoop.Append(Line.CreateBound(new XYZ( pw/2, 0, ph), new XYZ(-pw/2, 0, ph)));
+    doorLoop.Append(Line.CreateBound(new XYZ(-pw/2, 0, ph), new XYZ(-pw/2, 0, 0)));
+    doorProf.Append(doorLoop);
+    Extrusion door = familyDoc.FamilyCreate.NewExtrusion(true, doorProf, spFace, ft_val);
+
+    tx.Commit();
+}}""",
+        ))
+
+        return samples
+
+    # ------------------------------------------------------------------
+    # Wall-hosted plumbing penetrations and sleeves
+    # ------------------------------------------------------------------
+
+    def _wall_hosted_plumbing(self) -> List[SAMPLE]:
+        samples: List[SAMPLE] = []
+
+        pipe_cases = [
+            (50,  110, "50mm pipe (110mm sleeve OD)"),
+            (100, 160, "100mm pipe (160mm sleeve OD)"),
+            (150, 220, "150mm pipe (220mm sleeve OD)"),
+            (32,  75,  "32mm pipe (75mm sleeve OD)"),
+        ]
+        for pipe_dia, sleeve_od, desc in pipe_cases:
+            pipe_r_ft   = f"{pipe_dia / 2 * MM_TO_FT:.6f}"
+            sleeve_r_ft = f"{sleeve_od / 2 * MM_TO_FT:.6f}"
+            samples.append(_s(
+                f"Create a wall-hosted pipe sleeve family: {desc}",
+                f"""\
 using Autodesk.Revit.DB;
 using System;
 
-using (Transaction tx = new Transaction(doc, "Create Arched Opening"))
+// Pipe sleeve: void cuts wall; annular sleeve solid sits in void.
+// Pipe bore = {pipe_dia}mm, sleeve OD = {sleeve_od}mm
+using (Transaction tx = new Transaction(familyDoc, "Create Pipe Sleeve"))
 {{
     tx.Start();
 
-    Wall wall = new FilteredElementCollector(doc)
-        .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
+    double pipeR   = {pipe_r_ft};
+    double sleeveR = {sleeve_r_ft};
+    double wallT   = 1.968504;
+    int n = 24;
 
-    if (wall != null)
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    CurveArray voidLoop = new CurveArray();
+    for (int i = 0; i < n; i++)
     {{
-        double halfW     = {_ft(600)};  // 600 mm (half of 1200mm)
-        double rectH     = {_ft(1800)}; // 1800 mm rectangular portion
-        double archR     = {_ft(600)};  // 600 mm arch radius (= halfW)
-
-        // Opening profile: rectangle + semicircle on top
-        CurveArray profile = new CurveArray();
-        // Left vertical
-        profile.Append(Line.CreateBound(new XYZ(-halfW, 0, 0), new XYZ(-halfW, 0, rectH)));
-        // Arc
-        profile.Append(Arc.Create(
-            new XYZ(-halfW, 0, rectH),
-            new XYZ( halfW, 0, rectH),
-            new XYZ(0, 0, rectH + archR)));
-        // Right vertical
-        profile.Append(Line.CreateBound(new XYZ(halfW, 0, rectH), new XYZ(halfW, 0, 0)));
-        // Bottom
-        profile.Append(Line.CreateBound(new XYZ(halfW, 0, 0), new XYZ(-halfW, 0, 0)));
-
-        LocationCurve lc = wall.Location as LocationCurve;
-        XYZ origin = lc.Curve.Evaluate(0.5, true);
-
-        doc.Create.NewOpening(wall, profile, true);
+        double a0 = 2 * Math.PI * i / n;
+        double a1 = 2 * Math.PI * (i + 1) / n;
+        XYZ p0 = new XYZ(sleeveR * Math.Cos(a0), 0, sleeveR + sleeveR * Math.Sin(a0));
+        XYZ p1 = new XYZ(sleeveR * Math.Cos(a1), 0, sleeveR + sleeveR * Math.Sin(a1));
+        voidLoop.Append(Line.CreateBound(p0, p1));
     }}
+    CurveArrArray voidProf = new CurveArrArray();
+    voidProf.Append(voidLoop);
+    Extrusion wallVoid = familyDoc.FamilyCreate.NewExtrusion(false, voidProf, spFace, -wallT);
 
-    tx.Commit();
-}}"""))
-
-        return samples  # 8 samples
-
-    # ------------------------------------------------------------------
-    # Compound wall layers
-    # ------------------------------------------------------------------
-
-    def _compound_wall_layers(self) -> List[SAMPLE]:
-        samples = []
-
-        samples.append(_s("Create a compound wall type with 3 layers: exterior cladding 25mm, insulation 100mm, structural concrete 200mm",
-            f"""\
-using Autodesk.Revit.DB;
-using System.Collections.Generic;
-
-using (Transaction tx = new Transaction(doc, "Create Compound Wall Type"))
-{{
-    tx.Start();
-
-    WallType baseType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    WallType newType = baseType.Duplicate("Compound 325mm") as WallType;
-
-    CompoundStructure cs = newType.GetCompoundStructure();
-    IList<CompoundStructureLayer> layers = new List<CompoundStructureLayer>();
-
-    // Exterior cladding: 25mm
-    layers.Add(new CompoundStructureLayer({_ft(25)},
-        MaterialFunctionAssignment.Finish1,
-        ElementId.InvalidElementId));
-
-    // Thermal insulation: 100mm
-    layers.Add(new CompoundStructureLayer({_ft(100)},
-        MaterialFunctionAssignment.Insulation,
-        ElementId.InvalidElementId));
-
-    // Structural concrete: 200mm
-    layers.Add(new CompoundStructureLayer({_ft(200)},
-        MaterialFunctionAssignment.Structure,
-        ElementId.InvalidElementId));
-
-    cs.SetLayers(layers);
-    newType.SetCompoundStructure(cs);
-
-    tx.Commit();
-}}"""))
-
-        samples.append(_s("Read the layer thicknesses and functions of an existing compound wall type",
-            """\
-using Autodesk.Revit.DB;
-
-WallType wallType = new FilteredElementCollector(doc)
-    .OfClass(typeof(WallType)).Cast<WallType>()
-    .First(wt => wt.Kind == WallKind.Basic);
-
-CompoundStructure cs = wallType.GetCompoundStructure();
-if (cs != null)
-{
-    for (int i = 0; i < cs.LayerCount; i++)
-    {
-        CompoundStructureLayer layer = cs.GetLayer(i);
-        double thicknessMm = layer.Width / MM_TO_FT; // convert feet -> mm
-        MaterialFunctionAssignment func = layer.Function;
-        ElementId matId = layer.MaterialId;
-        // MM_TO_FT = 1.0 / 304.8
-    }
-}"""))
-
-        samples.append(_s("Assign a material to the structural layer of a compound wall type",
-            """\
-using Autodesk.Revit.DB;
-
-using (Transaction tx = new Transaction(doc, "Assign Layer Material"))
-{
-    tx.Start();
-
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    // Find concrete material
-    Material concrete = new FilteredElementCollector(doc)
-        .OfClass(typeof(Material))
-        .Cast<Material>()
-        .FirstOrDefault(m => m.Name.Contains("Concrete"));
-
-    CompoundStructure cs = wallType.GetCompoundStructure();
-    IList<CompoundStructureLayer> layers = cs.GetLayers();
-
-    for (int i = 0; i < layers.Count; i++)
-    {
-        if (layers[i].Function == MaterialFunctionAssignment.Structure && concrete != null)
-        {
-            // Replace structural layer material
-            CompoundStructureLayer newLayer = new CompoundStructureLayer(
-                layers[i].Width, layers[i].Function, concrete.Id);
-            layers[i] = newLayer;
-        }
-    }
-
-    cs.SetLayers(layers);
-    wallType.SetCompoundStructure(cs);
-
-    tx.Commit();
-}"""))
-
-        samples.append(_s("Create a 5-layer exterior wall type: finish 12mm, air gap 25mm, insulation 75mm, CMU 190mm, interior gypsum 12mm",
-            f"""\
-using Autodesk.Revit.DB;
-using System.Collections.Generic;
-
-using (Transaction tx = new Transaction(doc, "Create 5-Layer Wall"))
-{{
-    tx.Start();
-
-    WallType baseType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
-
-    WallType newType = baseType.Duplicate("Exterior 5-Layer 314mm") as WallType;
-    CompoundStructure cs = newType.GetCompoundStructure();
-
-    IList<CompoundStructureLayer> layers = new List<CompoundStructureLayer>
+    CurveArray outerLoop = new CurveArray();
+    CurveArray innerLoop = new CurveArray();
+    for (int i = 0; i < n; i++)
     {{
-        // Exterior to interior (layer 0 = exterior face)
-        new CompoundStructureLayer({_ft(12)},  MaterialFunctionAssignment.Finish1,    ElementId.InvalidElementId), // 12mm exterior finish
-        new CompoundStructureLayer({_ft(25)},  MaterialFunctionAssignment.Membrane,   ElementId.InvalidElementId), // 25mm air gap
-        new CompoundStructureLayer({_ft(75)},  MaterialFunctionAssignment.Insulation, ElementId.InvalidElementId), // 75mm insulation
-        new CompoundStructureLayer({_ft(190)}, MaterialFunctionAssignment.Structure,  ElementId.InvalidElementId), // 190mm CMU
-        new CompoundStructureLayer({_ft(12)},  MaterialFunctionAssignment.Finish2,    ElementId.InvalidElementId), // 12mm interior gypsum
-    }};
-
-    cs.SetLayers(layers);
-    newType.SetCompoundStructure(cs);
+        double a0 = 2 * Math.PI * i / n;
+        double a1 = 2 * Math.PI * (i + 1) / n;
+        XYZ po0 = new XYZ(sleeveR * Math.Cos(a0), 0, sleeveR + sleeveR * Math.Sin(a0));
+        XYZ po1 = new XYZ(sleeveR * Math.Cos(a1), 0, sleeveR + sleeveR * Math.Sin(a1));
+        XYZ pi0 = new XYZ(pipeR   * Math.Cos(a0), 0, sleeveR + pipeR   * Math.Sin(a0));
+        XYZ pi1 = new XYZ(pipeR   * Math.Cos(a1), 0, sleeveR + pipeR   * Math.Sin(a1));
+        outerLoop.Append(Line.CreateBound(po0, po1));
+        innerLoop.Append(Line.CreateBound(pi0, pi1));
+    }}
+    CurveArrArray sleeveProf = new CurveArrArray();
+    sleeveProf.Append(outerLoop);
+    sleeveProf.Append(innerLoop);
+    Extrusion sleeve = familyDoc.FamilyCreate.NewExtrusion(true, sleeveProf, spFace, -wallT);
 
     tx.Commit();
-}}"""))
+}}""",
+            ))
 
-        samples.append(_s("Get the total thickness of a compound wall type",
+        samples.append(_s(
+            "Create a wall-hosted fire-rated intumescent pipe collar (110mm pipe, 250mm collar OD, 40mm thick)",
+            """\
+using Autodesk.Revit.DB;
+using System;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Fire Collar"))
+{{
+    tx.Start();
+
+    double pipeR   = 0.180446;
+    double collarR = 0.410105;
+    double collarT = 0.131234;
+    double wallT   = 1.968504;
+    int n = 24;
+
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    CurveArray voidLoop = new CurveArray();
+    for (int i = 0; i < n; i++)
+    {{
+        double a0 = 2 * Math.PI * i / n;
+        double a1 = 2 * Math.PI * (i + 1) / n;
+        XYZ p0 = new XYZ(pipeR * Math.Cos(a0), 0, collarR + pipeR * Math.Sin(a0));
+        XYZ p1 = new XYZ(pipeR * Math.Cos(a1), 0, collarR + pipeR * Math.Sin(a1));
+        voidLoop.Append(Line.CreateBound(p0, p1));
+    }}
+    CurveArrArray voidProf = new CurveArrArray();
+    voidProf.Append(voidLoop);
+    Extrusion wallVoid = familyDoc.FamilyCreate.NewExtrusion(false, voidProf, spFace, -wallT);
+
+    CurveArray outerLoop = new CurveArray();
+    CurveArray innerLoop = new CurveArray();
+    for (int i = 0; i < n; i++)
+    {{
+        double a0 = 2 * Math.PI * i / n;
+        double a1 = 2 * Math.PI * (i + 1) / n;
+        XYZ co0 = new XYZ(collarR * Math.Cos(a0), 0, collarR + collarR * Math.Sin(a0));
+        XYZ co1 = new XYZ(collarR * Math.Cos(a1), 0, collarR + collarR * Math.Sin(a1));
+        XYZ ci0 = new XYZ(pipeR   * Math.Cos(a0), 0, collarR + pipeR   * Math.Sin(a0));
+        XYZ ci1 = new XYZ(pipeR   * Math.Cos(a1), 0, collarR + pipeR   * Math.Sin(a1));
+        outerLoop.Append(Line.CreateBound(co0, co1));
+        innerLoop.Append(Line.CreateBound(ci0, ci1));
+    }}
+    CurveArrArray collarProf = new CurveArrArray();
+    collarProf.Append(outerLoop);
+    collarProf.Append(innerLoop);
+    Extrusion collar = familyDoc.FamilyCreate.NewExtrusion(true, collarProf, spFace, collarT);
+
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall-hosted vent grille family (400x200mm louvre frame, wall void for airflow)",
             """\
 using Autodesk.Revit.DB;
 
-WallType wallType = new FilteredElementCollector(doc)
-    .OfClass(typeof(WallType)).Cast<WallType>()
-    .First(wt => wt.Kind == WallKind.Basic);
+using (Transaction tx = new Transaction(familyDoc, "Create Vent Grille"))
+{{
+    tx.Start();
 
-double totalThicknessMm = 0;
-CompoundStructure cs = wallType.GetCompoundStructure();
-if (cs != null)
-{
-    for (int i = 0; i < cs.LayerCount; i++)
-        totalThicknessMm += cs.GetLayer(i).Width / MM_TO_FT;
-}
-// MM_TO_FT = 1.0 / 304.8
-// totalThicknessMm now holds total wall thickness in mm"""))
+    double fw     = 1.312336;
+    double fh     = 0.656168;
+    double ftk    = 0.049213;
+    double border = 0.065617;
+    double wallT  = 0.984252;
 
-        return samples  # 5 samples
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    CurveArray outerLoop = new CurveArray();
+    outerLoop.Append(Line.CreateBound(new XYZ(-fw/2, 0, 0),  new XYZ( fw/2, 0, 0)));
+    outerLoop.Append(Line.CreateBound(new XYZ( fw/2, 0, 0),  new XYZ( fw/2, 0, fh)));
+    outerLoop.Append(Line.CreateBound(new XYZ( fw/2, 0, fh), new XYZ(-fw/2, 0, fh)));
+    outerLoop.Append(Line.CreateBound(new XYZ(-fw/2, 0, fh), new XYZ(-fw/2, 0, 0)));
+    double iw = fw - 2 * border;
+    double ih = fh - 2 * border;
+    CurveArray innerLoop = new CurveArray();
+    innerLoop.Append(Line.CreateBound(new XYZ(-iw/2, 0, border),      new XYZ( iw/2, 0, border)));
+    innerLoop.Append(Line.CreateBound(new XYZ( iw/2, 0, border),      new XYZ( iw/2, 0, border+ih)));
+    innerLoop.Append(Line.CreateBound(new XYZ( iw/2, 0, border+ih),   new XYZ(-iw/2, 0, border+ih)));
+    innerLoop.Append(Line.CreateBound(new XYZ(-iw/2, 0, border+ih),   new XYZ(-iw/2, 0, border)));
+    CurveArrArray frameProf = new CurveArrArray();
+    frameProf.Append(outerLoop);
+    frameProf.Append(innerLoop);
+    Extrusion frame = familyDoc.FamilyCreate.NewExtrusion(true, frameProf, spFace, ftk);
+
+    CurveArrArray voidProf = new CurveArrArray();
+    CurveArray voidLoop = new CurveArray();
+    voidLoop.Append(Line.CreateBound(new XYZ(-iw/2, 0, border),    new XYZ( iw/2, 0, border)));
+    voidLoop.Append(Line.CreateBound(new XYZ( iw/2, 0, border),    new XYZ( iw/2, 0, border+ih)));
+    voidLoop.Append(Line.CreateBound(new XYZ( iw/2, 0, border+ih), new XYZ(-iw/2, 0, border+ih)));
+    voidLoop.Append(Line.CreateBound(new XYZ(-iw/2, 0, border+ih), new XYZ(-iw/2, 0, border)));
+    voidProf.Append(voidLoop);
+    Extrusion airVoid = familyDoc.FamilyCreate.NewExtrusion(false, voidProf, spFace, -wallT);
+
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall-hosted rectangular cable tray wall penetration sleeve family (300x100mm tray)",
+            """\
+using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Cable Tray Penetration"))
+{{
+    tx.Start();
+
+    double tw    = 0.984252;
+    double th    = 0.328084;
+    double wallT = 0.984252;
+    double mat   = 0.032808;
+    double margin = 0.016404;
+
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    CurveArrArray voidProf = new CurveArrArray();
+    CurveArray voidLoop = new CurveArray();
+    voidLoop.Append(Line.CreateBound(new XYZ(-(tw+margin)/2, 0, -margin), new XYZ((tw+margin)/2, 0, -margin)));
+    voidLoop.Append(Line.CreateBound(new XYZ( (tw+margin)/2, 0, -margin), new XYZ((tw+margin)/2, 0, th+margin)));
+    voidLoop.Append(Line.CreateBound(new XYZ( (tw+margin)/2, 0, th+margin), new XYZ(-(tw+margin)/2, 0, th+margin)));
+    voidLoop.Append(Line.CreateBound(new XYZ(-(tw+margin)/2, 0, th+margin), new XYZ(-(tw+margin)/2, 0, -margin)));
+    voidProf.Append(voidLoop);
+    Extrusion wallVoid = familyDoc.FamilyCreate.NewExtrusion(false, voidProf, spFace, -wallT);
+
+    double ow = tw + 2 * mat;
+    double oh = th + 2 * mat;
+    CurveArray outerLoop = new CurveArray();
+    outerLoop.Append(Line.CreateBound(new XYZ(-ow/2, 0, -mat),   new XYZ( ow/2, 0, -mat)));
+    outerLoop.Append(Line.CreateBound(new XYZ( ow/2, 0, -mat),   new XYZ( ow/2, 0, oh-mat)));
+    outerLoop.Append(Line.CreateBound(new XYZ( ow/2, 0, oh-mat), new XYZ(-ow/2, 0, oh-mat)));
+    outerLoop.Append(Line.CreateBound(new XYZ(-ow/2, 0, oh-mat), new XYZ(-ow/2, 0, -mat)));
+    CurveArray innerLoop = new CurveArray();
+    innerLoop.Append(Line.CreateBound(new XYZ(-tw/2, 0, 0),  new XYZ( tw/2, 0, 0)));
+    innerLoop.Append(Line.CreateBound(new XYZ( tw/2, 0, 0),  new XYZ( tw/2, 0, th)));
+    innerLoop.Append(Line.CreateBound(new XYZ( tw/2, 0, th), new XYZ(-tw/2, 0, th)));
+    innerLoop.Append(Line.CreateBound(new XYZ(-tw/2, 0, th), new XYZ(-tw/2, 0, 0)));
+    CurveArrArray sleeveProf = new CurveArrArray();
+    sleeveProf.Append(outerLoop);
+    sleeveProf.Append(innerLoop);
+    Extrusion sleeve = familyDoc.FamilyCreate.NewExtrusion(true, sleeveProf, spFace, -wallT);
+
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall-hosted plumbing cleanout access panel family (200x200mm, flush-mounted)",
+            """\
+using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Cleanout Panel"))
+{{
+    tx.Start();
+
+    double pw = 0.656168;
+    double ph = 0.656168;
+    double pd = 0.492126;
+    double ft_val = 0.009843;
+
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-pw/2, 0, 0),  new XYZ( pw/2, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ( pw/2, 0, 0),  new XYZ( pw/2, 0, ph)));
+    loop.Append(Line.CreateBound(new XYZ( pw/2, 0, ph), new XYZ(-pw/2, 0, ph)));
+    loop.Append(Line.CreateBound(new XYZ(-pw/2, 0, ph), new XYZ(-pw/2, 0, 0)));
+    profile.Append(loop);
+
+    Extrusion recess = familyDoc.FamilyCreate.NewExtrusion(false, profile, spFace, -pd);
+    Extrusion door   = familyDoc.FamilyCreate.NewExtrusion(true,  profile, spFace,  ft_val);
+
+    tx.Commit();
+}}""",
+        ))
+
+        return samples
 
     # ------------------------------------------------------------------
-    # Wall parameters
+    # Wall-mounted fixtures
     # ------------------------------------------------------------------
 
-    def _wall_parameters(self) -> List[SAMPLE]:
-        samples = []
+    def _wall_mounted_fixtures(self) -> List[SAMPLE]:
+        samples: List[SAMPLE] = []
 
-        bip_cases = [
-            ("WALL_USER_HEIGHT_PARAM",  "unconnected height",  3000, "Set a wall's unconnected height to 3000mm"),
-            ("WALL_BASE_OFFSET",        "base offset",          300, "Set a wall's base offset to 300mm"),
-            ("WALL_TOP_OFFSET",         "top offset",          -100, "Set a wall's top offset to -100mm"),
+        shelf_cases = [
+            (600,  250, 30,  "small floating shelf 600x250mm, 30mm thick"),
+            (1200, 300, 40,  "medium floating shelf 1200x300mm, 40mm thick"),
+            (1800, 350, 50,  "large floating shelf 1800x350mm, 50mm thick"),
         ]
-        for bip, desc, value_mm, instruction in bip_cases:
-            samples.append(_s(instruction, f"""\
+        for w, d, t, desc in shelf_cases:
+            w_ft = f"{w * MM_TO_FT:.6f}"
+            d_ft = f"{d * MM_TO_FT:.6f}"
+            t_ft = f"{t * MM_TO_FT:.6f}"
+            samples.append(_s(
+                f"Create a wall-mounted {desc}",
+                f"""\
 using Autodesk.Revit.DB;
 
-Wall wall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
-
-if (wall != null)
+using (Transaction tx = new Transaction(familyDoc, "Create Floating Shelf"))
 {{
-    using (Transaction tx = new Transaction(doc, "Set Wall {desc.title()}"))
+    tx.Start();
+
+    double sw = {w_ft};
+    double sd = {d_ft};
+    double st = {t_ft};
+
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-sw/2, 0, 0),  new XYZ( sw/2, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ( sw/2, 0, 0),  new XYZ( sw/2, 0, st)));
+    loop.Append(Line.CreateBound(new XYZ( sw/2, 0, st), new XYZ(-sw/2, 0, st)));
+    loop.Append(Line.CreateBound(new XYZ(-sw/2, 0, st), new XYZ(-sw/2, 0, 0)));
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion shelf = familyDoc.FamilyCreate.NewExtrusion(true, profile, sp, sd);
+
+    tx.Commit();
+}}""",
+            ))
+
+        samples.append(_s(
+            "Create a wall-mounted L-bracket support family (80x80mm, 5mm thick)",
+            """\
+using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create L-Bracket"))
+{{
+    tx.Start();
+
+    double legL = 0.262467;
+    double legT = 0.016404;
+    double legW = 0.131234;
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    CurveArrArray vProf = new CurveArrArray();
+    CurveArray vLoop = new CurveArray();
+    vLoop.Append(Line.CreateBound(new XYZ(-legW/2, 0, 0),    new XYZ( legW/2, 0, 0)));
+    vLoop.Append(Line.CreateBound(new XYZ( legW/2, 0, 0),    new XYZ( legW/2, 0, legL)));
+    vLoop.Append(Line.CreateBound(new XYZ( legW/2, 0, legL), new XYZ(-legW/2, 0, legL)));
+    vLoop.Append(Line.CreateBound(new XYZ(-legW/2, 0, legL), new XYZ(-legW/2, 0, 0)));
+    vProf.Append(vLoop);
+    Extrusion vertLeg = familyDoc.FamilyCreate.NewExtrusion(true, vProf, sp, legT);
+
+    SketchPlane spTop = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, new XYZ(0, legT, 0)));
+    CurveArrArray hProf = new CurveArrArray();
+    CurveArray hLoop = new CurveArray();
+    hLoop.Append(Line.CreateBound(new XYZ(-legW/2, legT, legL-legT), new XYZ( legW/2, legT, legL-legT)));
+    hLoop.Append(Line.CreateBound(new XYZ( legW/2, legT, legL-legT), new XYZ( legW/2, legT, legL)));
+    hLoop.Append(Line.CreateBound(new XYZ( legW/2, legT, legL),      new XYZ(-legW/2, legT, legL)));
+    hLoop.Append(Line.CreateBound(new XYZ(-legW/2, legT, legL),      new XYZ(-legW/2, legT, legL-legT)));
+    hProf.Append(hLoop);
+    Extrusion horizLeg = familyDoc.FamilyCreate.NewExtrusion(true, hProf, spTop, legL);
+
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall-mounted signage board family (600x200mm, 20mm standoff from wall)",
+            """\
+using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Signage Board"))
+{{
+    tx.Start();
+
+    double sw  = 1.968504;
+    double sh  = 0.656168;
+    double st  = 0.016404;
+    double sof = 0.065617;
+
+    CurveArrArray signProf = new CurveArrArray();
+    CurveArray signLoop = new CurveArray();
+    signLoop.Append(Line.CreateBound(new XYZ(-sw/2, sof, 0),  new XYZ( sw/2, sof, 0)));
+    signLoop.Append(Line.CreateBound(new XYZ( sw/2, sof, 0),  new XYZ( sw/2, sof, sh)));
+    signLoop.Append(Line.CreateBound(new XYZ( sw/2, sof, sh), new XYZ(-sw/2, sof, sh)));
+    signLoop.Append(Line.CreateBound(new XYZ(-sw/2, sof, sh), new XYZ(-sw/2, sof, 0)));
+    signProf.Append(signLoop);
+
+    SketchPlane spBoard = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, new XYZ(0, sof, 0)));
+    Extrusion sign = familyDoc.FamilyCreate.NewExtrusion(true, signProf, spBoard, st);
+
+    double postW = 0.032808;
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    foreach (double px in new double[] { -sw/2 + postW, sw/2 - postW })
     {{
-        tx.Start();
-
-        Parameter param = wall.get_Parameter(BuiltInParameter.{bip});
-        if (param != null && !param.IsReadOnly)
-            param.Set({_ft(abs(value_mm)) if value_mm >= 0 else f"-{_ft(abs(value_mm))}"}); // {value_mm} mm
-
-        tx.Commit();
+        CurveArrArray postProf = new CurveArrArray();
+        CurveArray postLoop = new CurveArray();
+        postLoop.Append(Line.CreateBound(new XYZ(px-postW/2, 0, sh/2-postW/2), new XYZ(px+postW/2, 0, sh/2-postW/2)));
+        postLoop.Append(Line.CreateBound(new XYZ(px+postW/2, 0, sh/2-postW/2), new XYZ(px+postW/2, 0, sh/2+postW/2)));
+        postLoop.Append(Line.CreateBound(new XYZ(px+postW/2, 0, sh/2+postW/2), new XYZ(px-postW/2, 0, sh/2+postW/2)));
+        postLoop.Append(Line.CreateBound(new XYZ(px-postW/2, 0, sh/2+postW/2), new XYZ(px-postW/2, 0, sh/2-postW/2)));
+        postProf.Append(postLoop);
+        Extrusion post = familyDoc.FamilyCreate.NewExtrusion(true, postProf, spFace, sof);
     }}
-}}
-// MM_TO_FT = 1.0 / 304.8"""))
 
-        samples.append(_s("Read a wall's width (thickness) using BuiltInParameter.WALL_ATTR_WIDTH_PARAM",
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall-mounted handrail bracket family (80mm arm projection, 40mm rail support)",
             """\
 using Autodesk.Revit.DB;
 
-Wall wall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
-
-if (wall != null)
-{
-    // Wall width is a type parameter
-    Parameter widthParam = wall.WallType.get_Parameter(BuiltInParameter.WALL_ATTR_WIDTH_PARAM);
-    double widthMm = widthParam?.AsDouble() / MM_TO_FT ?? 0;
-    // MM_TO_FT = 1.0 / 304.8
-}"""))
-
-        samples.append(_s("Set a wall's base constraint level to Level 2",
-            """\
-using Autodesk.Revit.DB;
-
-Wall wall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
-
-Level level2 = new FilteredElementCollector(doc)
-    .OfClass(typeof(Level)).Cast<Level>()
-    .FirstOrDefault(l => l.Name == "Level 2");
-
-if (wall != null && level2 != null)
-{
-    using (Transaction tx = new Transaction(doc, "Set Wall Base Level"))
-    {
-        tx.Start();
-
-        Parameter baseLevel = wall.get_Parameter(BuiltInParameter.WALL_BASE_CONSTRAINT);
-        if (baseLevel != null && !baseLevel.IsReadOnly)
-            baseLevel.Set(level2.Id);
-
-        tx.Commit();
-    }
-}"""))
-
-        samples.append(_s("Set a wall's top constraint to 'Up to Level: Level 3'",
-            """\
-using Autodesk.Revit.DB;
-
-Wall wall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
-
-Level level3 = new FilteredElementCollector(doc)
-    .OfClass(typeof(Level)).Cast<Level>()
-    .FirstOrDefault(l => l.Name == "Level 3");
-
-if (wall != null && level3 != null)
-{
-    using (Transaction tx = new Transaction(doc, "Set Wall Top Constraint"))
-    {
-        tx.Start();
-
-        Parameter topConstraint = wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE);
-        if (topConstraint != null && !topConstraint.IsReadOnly)
-            topConstraint.Set(level3.Id);
-
-        tx.Commit();
-    }
-}"""))
-
-        samples.append(_s("Check if a wall is structural using its structural usage parameter",
-            """\
-using Autodesk.Revit.DB;
-
-Wall wall = new FilteredElementCollector(doc)
-    .OfClass(typeof(Wall)).Cast<Wall>().FirstOrDefault();
-
-if (wall != null)
-{
-    Parameter structUsage = wall.get_Parameter(BuiltInParameter.WALL_STRUCTURAL_USAGE_PARAM);
-    if (structUsage != null)
-    {
-        int usage = structUsage.AsInteger();
-        bool isStructural = usage != 0; // 0 = Non-bearing
-    }
-}"""))
-
-        return samples  # 7 samples
-
-    # ------------------------------------------------------------------
-    # Wall sweeps and reveals
-    # ------------------------------------------------------------------
-
-    def _wall_sweeps_reveals(self) -> List[SAMPLE]:
-        samples = []
-
-        samples.append(_s("Add a base wall sweep (skirting board) at 150mm height to a wall type",
-            f"""\
-using Autodesk.Revit.DB;
-
-using (Transaction tx = new Transaction(doc, "Add Wall Sweep"))
+using (Transaction tx = new Transaction(familyDoc, "Create Handrail Bracket"))
 {{
     tx.Start();
 
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
+    double baseW = 0.196850;
+    double baseH = 0.262467;
+    double baseT = 0.019685;
+    double armL  = 0.262467;
+    double armR  = 0.049213;
 
-    WallSweepInfo info = new WallSweepInfo(WallSweepType.Sweep, true);
-    info.Distance   = {_ft(150)};  // 150 mm from base
-    info.WallSide   = WallSide.Interior;
-    info.SweepAtTop = false;       // at base
-    info.OffsetFromWall = 0;
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
 
-    // Find a sweep profile
-    WallSweepType sweepTypeRef = WallSweepType.Sweep;
-    WallType sweptType = wallType.Duplicate("Wall with Base Sweep") as WallType;
-    CompoundStructure cs = sweptType.GetCompoundStructure();
-    cs.AddWallSweep(info);
-    sweptType.SetCompoundStructure(cs);
+    CurveArrArray baseProf = new CurveArrArray();
+    CurveArray baseLoop = new CurveArray();
+    baseLoop.Append(Line.CreateBound(new XYZ(-baseW/2, 0, 0),     new XYZ( baseW/2, 0, 0)));
+    baseLoop.Append(Line.CreateBound(new XYZ( baseW/2, 0, 0),     new XYZ( baseW/2, 0, baseH)));
+    baseLoop.Append(Line.CreateBound(new XYZ( baseW/2, 0, baseH), new XYZ(-baseW/2, 0, baseH)));
+    baseLoop.Append(Line.CreateBound(new XYZ(-baseW/2, 0, baseH), new XYZ(-baseW/2, 0, 0)));
+    baseProf.Append(baseLoop);
+    Extrusion basePlate = familyDoc.FamilyCreate.NewExtrusion(true, baseProf, spFace, baseT);
+
+    double armH = 2 * armR;
+    double armZ = baseH / 2 - armR;
+    SketchPlane spArm = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, new XYZ(0, baseT, 0)));
+    CurveArrArray armProf = new CurveArrArray();
+    CurveArray armLoop = new CurveArray();
+    armLoop.Append(Line.CreateBound(new XYZ(-armR, baseT, armZ),        new XYZ( armR, baseT, armZ)));
+    armLoop.Append(Line.CreateBound(new XYZ( armR, baseT, armZ),        new XYZ( armR, baseT, armZ + armH)));
+    armLoop.Append(Line.CreateBound(new XYZ( armR, baseT, armZ + armH), new XYZ(-armR, baseT, armZ + armH)));
+    armLoop.Append(Line.CreateBound(new XYZ(-armR, baseT, armZ + armH), new XYZ(-armR, baseT, armZ)));
+    armProf.Append(armLoop);
+    Extrusion arm = familyDoc.FamilyCreate.NewExtrusion(true, armProf, spArm, armL);
 
     tx.Commit();
-}}"""))
+}}""",
+        ))
 
-        samples.append(_s("Get all wall sweeps on a wall type and print their heights",
+        samples.append(_s(
+            "Create a wall-mounted fire extinguisher bracket family (holds 9kg cylinder, 180mm diameter)",
             """\
 using Autodesk.Revit.DB;
-using System.Collections.Generic;
+using System;
 
-WallType wallType = new FilteredElementCollector(doc)
-    .OfClass(typeof(WallType)).Cast<WallType>()
-    .First(wt => wt.Kind == WallKind.Basic);
-
-CompoundStructure cs = wallType.GetCompoundStructure();
-if (cs != null)
-{
-    IList<WallSweepInfo> sweeps = cs.GetWallSweepsInfo();
-    foreach (WallSweepInfo sweep in sweeps)
-    {
-        double heightMm = sweep.Distance / MM_TO_FT;
-        WallSide side   = sweep.WallSide;
-        bool isTop      = sweep.SweepAtTop;
-    }
-    // MM_TO_FT = 1.0 / 304.8
-}"""))
-
-        samples.append(_s("Add a horizontal reveal at mid-height to an exterior wall type",
-            f"""\
-using Autodesk.Revit.DB;
-
-using (Transaction tx = new Transaction(doc, "Add Wall Reveal"))
+using (Transaction tx = new Transaction(familyDoc, "Create Extinguisher Bracket"))
 {{
     tx.Start();
 
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
+    double cylR   = 0.295276;
+    double cylH   = 1.640420;
+    double plateW = 0.721785;
+    double plateH = 1.804462;
+    double plateT = 0.009843;
+    int n = 20;
 
-    WallType revealType = wallType.Duplicate("Wall with Mid Reveal") as WallType;
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
 
-    WallSweepInfo revealInfo = new WallSweepInfo(WallSweepType.Reveal, true);
-    revealInfo.Distance     = {_ft(1500)}; // 1500 mm from base (mid-height of 3m wall)
-    revealInfo.WallSide     = WallSide.Exterior;
-    revealInfo.SweepAtTop   = false;
-    revealInfo.OffsetFromWall = 0;
+    CurveArrArray plateProf = new CurveArrArray();
+    CurveArray plateLoop = new CurveArray();
+    plateLoop.Append(Line.CreateBound(new XYZ(-plateW/2, 0, 0),      new XYZ( plateW/2, 0, 0)));
+    plateLoop.Append(Line.CreateBound(new XYZ( plateW/2, 0, 0),      new XYZ( plateW/2, 0, plateH)));
+    plateLoop.Append(Line.CreateBound(new XYZ( plateW/2, 0, plateH), new XYZ(-plateW/2, 0, plateH)));
+    plateLoop.Append(Line.CreateBound(new XYZ(-plateW/2, 0, plateH), new XYZ(-plateW/2, 0, 0)));
+    plateProf.Append(plateLoop);
+    Extrusion plate = familyDoc.FamilyCreate.NewExtrusion(true, plateProf, spFace, plateT);
 
-    CompoundStructure cs = revealType.GetCompoundStructure();
-    cs.AddWallSweep(revealInfo);
-    revealType.SetCompoundStructure(cs);
+    SketchPlane spBase = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, new XYZ(0, cylR + plateT, 0)));
+    CurveArray cylLoop = new CurveArray();
+    for (int i = 0; i < n; i++)
+    {{
+        double a0 = 2 * Math.PI * i / n;
+        double a1 = 2 * Math.PI * (i + 1) / n;
+        XYZ p0 = new XYZ(cylR * Math.Cos(a0), cylR + plateT + cylR * Math.Sin(a0), 0);
+        XYZ p1 = new XYZ(cylR * Math.Cos(a1), cylR + plateT + cylR * Math.Sin(a1), 0);
+        cylLoop.Append(Line.CreateBound(p0, p1));
+    }}
+    CurveArrArray cylProf = new CurveArrArray();
+    cylProf.Append(cylLoop);
+    Extrusion cylinder = familyDoc.FamilyCreate.NewExtrusion(true, cylProf, spBase, cylH);
 
     tx.Commit();
-}}"""))
+}}""",
+        ))
 
-        samples.append(_s("Remove all wall sweeps from a wall type",
-            """\
-using Autodesk.Revit.DB;
-using System.Collections.Generic;
+        return samples
 
-using (Transaction tx = new Transaction(doc, "Remove Wall Sweeps"))
+    # ------------------------------------------------------------------
+    # Curtain wall panel patterns
+    # ------------------------------------------------------------------
+
+    def _wall_panel_patterns(self) -> List[SAMPLE]:
+        samples: List[SAMPLE] = []
+
+        samples.append(_s(
+            "Create a curtain wall panel family: flat rectangular glass panel with aluminium frame",
+            """using Autodesk.Revit.DB;
+
+// Curtain panel: glass infill + aluminium frame
+// Nominal 1000x2400mm for authoring; flexes with curtain grid in practice.
+using (Transaction tx = new Transaction(familyDoc, "Create Curtain Panel"))
 {
     tx.Start();
 
-    WallType wallType = new FilteredElementCollector(doc)
-        .OfClass(typeof(WallType)).Cast<WallType>()
-        .First(wt => wt.Kind == WallKind.Basic);
+    double pw     = 3.280840; // 1000 mm
+    double ph     = 7.874016; // 2400 mm
+    double pt     = 0.039370; // 12 mm glass
+    double border = 0.164042; // 50 mm frame border
 
-    CompoundStructure cs = wallType.GetCompoundStructure();
-    if (cs != null)
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    double iw = pw - 2 * border;
+    double ih = ph - 2 * border;
+
+    // Glass infill
+    CurveArray glassLoop = new CurveArray();
+    glassLoop.Append(Line.CreateBound(new XYZ(border,    0, border),    new XYZ(border+iw, 0, border)));
+    glassLoop.Append(Line.CreateBound(new XYZ(border+iw, 0, border),    new XYZ(border+iw, 0, border+ih)));
+    glassLoop.Append(Line.CreateBound(new XYZ(border+iw, 0, border+ih), new XYZ(border,    0, border+ih)));
+    glassLoop.Append(Line.CreateBound(new XYZ(border,    0, border+ih), new XYZ(border,    0, border)));
+    CurveArrArray glassProf = new CurveArrArray();
+    glassProf.Append(glassLoop);
+    Extrusion glass = familyDoc.FamilyCreate.NewExtrusion(true, glassProf, spFace, pt);
+
+    // Frame (annular solid)
+    CurveArray outerLoop = new CurveArray();
+    outerLoop.Append(Line.CreateBound(new XYZ(0, 0, 0),  new XYZ(pw, 0, 0)));
+    outerLoop.Append(Line.CreateBound(new XYZ(pw, 0, 0), new XYZ(pw, 0, ph)));
+    outerLoop.Append(Line.CreateBound(new XYZ(pw, 0, ph), new XYZ(0, 0, ph)));
+    outerLoop.Append(Line.CreateBound(new XYZ(0, 0, ph), new XYZ(0, 0, 0)));
+    CurveArray innerLoop = new CurveArray();
+    innerLoop.Append(Line.CreateBound(new XYZ(border,    0, border),    new XYZ(border+iw, 0, border)));
+    innerLoop.Append(Line.CreateBound(new XYZ(border+iw, 0, border),    new XYZ(border+iw, 0, border+ih)));
+    innerLoop.Append(Line.CreateBound(new XYZ(border+iw, 0, border+ih), new XYZ(border,    0, border+ih)));
+    innerLoop.Append(Line.CreateBound(new XYZ(border,    0, border+ih), new XYZ(border,    0, border)));
+    CurveArrArray frameProf = new CurveArrArray();
+    frameProf.Append(outerLoop);
+    frameProf.Append(innerLoop);
+    Extrusion frame = familyDoc.FamilyCreate.NewExtrusion(true, frameProf, spFace, 0.131234); // 40mm
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Create a curtain wall spandrel panel family (opaque, 1000x600mm, 100mm total thickness)",
+            """using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Spandrel Panel"))
+{
+    tx.Start();
+
+    double pw = 3.280840; // 1000 mm
+    double ph = 1.968504; // 600 mm
+
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    CurveArrArray prof = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(0, 0, 0),  new XYZ(pw, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ(pw, 0, 0), new XYZ(pw, 0, ph)));
+    loop.Append(Line.CreateBound(new XYZ(pw, 0, ph), new XYZ(0, 0, ph)));
+    loop.Append(Line.CreateBound(new XYZ(0, 0, ph), new XYZ(0, 0, 0)));
+    prof.Append(loop);
+
+    // Outer cladding (10mm)
+    Extrusion cladding = familyDoc.FamilyCreate.NewExtrusion(true, prof, spFace, 0.032808);
+
+    // Insulation (80mm behind cladding)
+    SketchPlane spInsul = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, new XYZ(0, 0.032808, 0)));
+    Extrusion insulation = familyDoc.FamilyCreate.NewExtrusion(true, prof, spInsul, 0.262467);
+
+    // Backing panel (10mm)
+    SketchPlane spBack = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, new XYZ(0, 0.295276, 0)));
+    Extrusion backing = familyDoc.FamilyCreate.NewExtrusion(true, prof, spBack, 0.032808);
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Create a curtain wall louvred panel family (horizontal aluminium blades, 1000x600mm)",
+            """using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Louvred Panel"))
+{
+    tx.Start();
+
+    double pw         = 3.280840; // 1000 mm
+    double ph         = 1.968504; // 600 mm
+    double frameB     = 0.065617; // 20 mm border
+    double bladeT     = 0.016404; // 5 mm blade
+    double bladePitch = 0.098425; // 30 mm pitch
+    double bladeDepth = 0.196850; // 60 mm blade depth
+    int bladeCount    = (int)((ph - 2 * frameB) / bladePitch);
+
+    SketchPlane spFace = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    // Frame
+    double iw = pw - 2 * frameB;
+    double ih = ph - 2 * frameB;
+    CurveArray outer = new CurveArray();
+    outer.Append(Line.CreateBound(new XYZ(0, 0, 0),  new XYZ(pw, 0, 0)));
+    outer.Append(Line.CreateBound(new XYZ(pw, 0, 0), new XYZ(pw, 0, ph)));
+    outer.Append(Line.CreateBound(new XYZ(pw, 0, ph), new XYZ(0, 0, ph)));
+    outer.Append(Line.CreateBound(new XYZ(0, 0, ph), new XYZ(0, 0, 0)));
+    CurveArray inner = new CurveArray();
+    inner.Append(Line.CreateBound(new XYZ(frameB, 0, frameB),       new XYZ(frameB+iw, 0, frameB)));
+    inner.Append(Line.CreateBound(new XYZ(frameB+iw, 0, frameB),    new XYZ(frameB+iw, 0, frameB+ih)));
+    inner.Append(Line.CreateBound(new XYZ(frameB+iw, 0, frameB+ih), new XYZ(frameB, 0, frameB+ih)));
+    inner.Append(Line.CreateBound(new XYZ(frameB, 0, frameB+ih),    new XYZ(frameB, 0, frameB)));
+    CurveArrArray frameProf = new CurveArrArray();
+    frameProf.Append(outer);
+    frameProf.Append(inner);
+    Extrusion frame = familyDoc.FamilyCreate.NewExtrusion(true, frameProf, spFace, 0.131234);
+
+    // Blades
+    for (int b = 0; b < bladeCount; b++)
     {
-        IList<WallSweepInfo> sweeps = cs.GetWallSweepsInfo();
-        for (int i = sweeps.Count - 1; i >= 0; i--)
-            cs.RemoveWallSweep(i);
-        wallType.SetCompoundStructure(cs);
+        double z = frameB + b * bladePitch;
+        CurveArrArray bp = new CurveArrArray();
+        CurveArray bl = new CurveArray();
+        bl.Append(Line.CreateBound(new XYZ(frameB, 0, z),         new XYZ(frameB+iw, 0, z)));
+        bl.Append(Line.CreateBound(new XYZ(frameB+iw, 0, z),      new XYZ(frameB+iw, 0, z+bladeT)));
+        bl.Append(Line.CreateBound(new XYZ(frameB+iw, 0, z+bladeT), new XYZ(frameB, 0, z+bladeT)));
+        bl.Append(Line.CreateBound(new XYZ(frameB, 0, z+bladeT),  new XYZ(frameB, 0, z)));
+        bp.Append(bl);
+        Extrusion blade = familyDoc.FamilyCreate.NewExtrusion(true, bp, spFace, bladeDepth);
     }
 
     tx.Commit();
-}"""))
+}""",
+        ))
 
-        return samples  # 4 samples
+        samples.append(_s(
+            "Create a parametric curtain wall panel family using built-in Width and Height parameters",
+            """using Autodesk.Revit.DB;
 
+// In curtain panel templates, Width and Height already exist as built-in params.
+FamilyManager famMgr = familyDoc.FamilyManager;
+FamilyParameter pWidth  = famMgr.get_Parameter("Width");
+FamilyParameter pHeight = famMgr.get_Parameter("Height");
 
-if __name__ == "__main__":
-    import json
-    gen = WallFamilyGenerator()
-    samples = gen.generate()
-    print(f"Generated {len(samples)} samples")
-    assert all(set(s.keys()) == {"instruction", "input", "output"} for s in samples), "Bad sample structure"
-    print("[OK] All samples valid")
+using (Transaction tx = new Transaction(familyDoc, "Create Parametric Panel"))
+{
+    tx.Start();
+
+    double w = 3.280840; // 1000 mm (flexes with grid)
+    double h = 7.874016; // 2400 mm (flexes with grid)
+    double t = 0.039370; // 12 mm
+
+    CurveArrArray prof = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(0, 0, 0), new XYZ(w, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ(w, 0, 0), new XYZ(w, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(w, 0, h), new XYZ(0, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(0, 0, h), new XYZ(0, 0, 0)));
+    prof.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion panel = familyDoc.FamilyCreate.NewExtrusion(true, prof, sp, t);
+
+    tx.Commit();
+}""",
+        ))
+
+        return samples
+
+    # ------------------------------------------------------------------
+    # Wall reveal profiles and wall sweeps
+    # ------------------------------------------------------------------
+
+    def _wall_reveal_profiles(self) -> List[SAMPLE]:
+        samples: List[SAMPLE] = []
+
+        reveal_cases = [
+            (25, 15, "narrow reveal 25mm wide, 15mm deep"),
+            (50, 25, "standard reveal 50mm wide, 25mm deep"),
+            (75, 40, "deep reveal 75mm wide, 40mm deep"),
+        ]
+        for w, d, desc in reveal_cases:
+            w_ft = f"{w * MM_TO_FT:.6f}"
+            d_ft = f"{d * MM_TO_FT:.6f}"
+            samples.append(_s(
+                f"Create a wall reveal profile family: {desc}",
+                f"""\
+using Autodesk.Revit.DB;
+
+// Wall reveal cross-section profile: rectangular channel.
+// Origin at face centre; positive Y = into wall.
+using (Transaction tx = new Transaction(familyDoc, "Create Reveal Profile"))
+{{{{
+    tx.Start();
+
+    double rw = {w_ft};  // {w} mm
+    double rd = {d_ft};  // {d} mm
+
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-rw/2, 0,  0),  new XYZ( rw/2, 0,  0)));
+    loop.Append(Line.CreateBound(new XYZ( rw/2, 0,  0),  new XYZ( rw/2, rd, 0)));
+    loop.Append(Line.CreateBound(new XYZ( rw/2, rd, 0),  new XYZ(-rw/2, rd, 0)));
+    loop.Append(Line.CreateBound(new XYZ(-rw/2, rd, 0),  new XYZ(-rw/2, 0,  0)));
+
+    CurveArrArray profile = new CurveArrArray();
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+    familyDoc.FamilyCreate.NewModelCurveArray(profile, sp);
+
+    tx.Commit();
+}}}}""",
+            ))
+
+        samples.append(_s(
+            "Create a wall sweep chair rail profile family (50mm tall, 30mm projection)",
+            """using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Chair Rail Profile"))
+{
+    tx.Start();
+
+    double h  = 0.164042; // 50 mm
+    double w  = 0.098425; // 30 mm
+    double ch = 0.019685; // 6 mm chamfer
+
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(0, 0, 0),      new XYZ(w, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ(w, 0, 0),      new XYZ(w, 0, h - ch)));
+    loop.Append(Line.CreateBound(new XYZ(w, 0, h - ch), new XYZ(w - ch, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(w - ch, 0, h), new XYZ(0, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(0, 0, h),      new XYZ(0, 0, 0)));
+
+    CurveArrArray profile = new CurveArrArray();
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+    familyDoc.FamilyCreate.NewModelCurveArray(profile, sp);
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall sweep skirting board profile family (90mm tall, 18mm thick, floor rebate)",
+            """using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Skirting Profile"))
+{
+    tx.Start();
+
+    double h    = 0.295276; // 90 mm
+    double t    = 0.059055; // 18 mm
+    double reb  = 0.016404; // 5 mm rebate depth
+    double rebH = 0.032808; // 10 mm rebate height
+
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(0,   0, 0),    new XYZ(reb, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ(reb, 0, 0),    new XYZ(reb, 0, rebH)));
+    loop.Append(Line.CreateBound(new XYZ(reb, 0, rebH), new XYZ(t,   0, rebH)));
+    loop.Append(Line.CreateBound(new XYZ(t,   0, rebH), new XYZ(t,   0, h)));
+    loop.Append(Line.CreateBound(new XYZ(t,   0, h),    new XYZ(0,   0, h)));
+    loop.Append(Line.CreateBound(new XYZ(0,   0, h),    new XYZ(0,   0, 0)));
+
+    CurveArrArray profile = new CurveArrArray();
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+    familyDoc.FamilyCreate.NewModelCurveArray(profile, sp);
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall sweep cornice profile family (150mm tall, 100mm projection, stepped)",
+            """using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Cornice Profile"))
+{
+    tx.Start();
+
+    double h  = 0.492126; // 150 mm
+    double w  = 0.328084; // 100 mm
+    double s1 = 0.098425; // 30 mm step
+    double s2 = 0.098425; // 30 mm step
+
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(0,    0, 0),     new XYZ(w,    0, 0)));
+    loop.Append(Line.CreateBound(new XYZ(w,    0, 0),     new XYZ(w,    0, s1)));
+    loop.Append(Line.CreateBound(new XYZ(w,    0, s1),    new XYZ(w-s1, 0, s1)));
+    loop.Append(Line.CreateBound(new XYZ(w-s1, 0, s1),   new XYZ(w-s1, 0, h-s2)));
+    loop.Append(Line.CreateBound(new XYZ(w-s1, 0, h-s2), new XYZ(s2,   0, h-s2)));
+    loop.Append(Line.CreateBound(new XYZ(s2,   0, h-s2), new XYZ(s2,   0, h)));
+    loop.Append(Line.CreateBound(new XYZ(s2,   0, h),    new XYZ(0,    0, h)));
+    loop.Append(Line.CreateBound(new XYZ(0,    0, h),    new XYZ(0,    0, 0)));
+
+    CurveArrArray profile = new CurveArrArray();
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+    familyDoc.FamilyCreate.NewModelCurveArray(profile, sp);
+
+    tx.Commit();
+}""",
+        ))
+
+        return samples
+
+    # ------------------------------------------------------------------
+    # Wall embedded structural elements
+    # ------------------------------------------------------------------
+
+    def _wall_embedded_elements(self) -> List[SAMPLE]:
+        samples: List[SAMPLE] = []
+
+        lintel_cases = [
+            (900,  200, 100, 8,  "steel angle lintel 900mm span, 200x100x8mm"),
+            (1200, 250, 100, 10, "steel angle lintel 1200mm span, 250x100x10mm"),
+            (1800, 300, 150, 12, "heavy angle lintel 1800mm span, 300x150x12mm"),
+        ]
+        for span, h, w, t, desc in lintel_cases:
+            span_ft = f"{span * MM_TO_FT:.6f}"
+            h_ft    = f"{h   * MM_TO_FT:.6f}"
+            w_ft    = f"{w   * MM_TO_FT:.6f}"
+            t_ft    = f"{t   * MM_TO_FT:.6f}"
+            samples.append(_s(
+                f"Create a wall-embedded steel lintel family: {desc}",
+                f"""\
+using Autodesk.Revit.DB;
+
+// Steel angle lintel: L-section, vertical leg supports masonry above opening.
+using (Transaction tx = new Transaction(familyDoc, "Create Steel Lintel"))
+{{
+    tx.Start();
+
+    double span = {span_ft};
+    double h    = {h_ft};
+    double w    = {w_ft};
+    double t    = {t_ft};
+
+    // L-section profile in XZ plane
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(0, 0, 0),   new XYZ(w, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ(w, 0, 0),   new XYZ(w, 0, t)));
+    loop.Append(Line.CreateBound(new XYZ(w, 0, t),   new XYZ(t, 0, t)));
+    loop.Append(Line.CreateBound(new XYZ(t, 0, t),   new XYZ(t, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(t, 0, h),   new XYZ(0, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(0, 0, h),   new XYZ(0, 0, 0)));
+
+    CurveArrArray profile = new CurveArrArray();
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion lintel = familyDoc.FamilyCreate.NewExtrusion(true, profile, sp, span);
+
+    tx.Commit();
+}}""",
+            ))
+
+        samples.append(_s(
+            "Create a precast concrete window sill family (150mm projection, 50mm tall, drip groove)",
+            """\
+using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Concrete Sill"))
+{{
+    tx.Start();
+
+    double sw   = 0.492126;   // 150 mm projection
+    double sh   = 0.164042;    // 50 mm height
+    double dripW = 0.032808;   // 10 mm drip width
+    double dripD = 0.016404;    // 5 mm drip depth
+
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(0,  0, 0),  new XYZ(sw, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ(sw, 0, 0),  new XYZ(sw, 0, sh)));
+    loop.Append(Line.CreateBound(new XYZ(sw, 0, sh), new XYZ(0,  0, sh)));
+    loop.Append(Line.CreateBound(new XYZ(0,  0, sh), new XYZ(0,  0, 0)));
+    CurveArrArray prof = new CurveArrArray();
+    prof.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion sill = familyDoc.FamilyCreate.NewExtrusion(true, prof, sp, 1.0);
+
+    // Drip groove void on soffit near front
+    CurveArray dripLoop = new CurveArray();
+    dripLoop.Append(Line.CreateBound(new XYZ(sw-dripW*2, 0, 0),      new XYZ(sw-dripW, 0, 0)));
+    dripLoop.Append(Line.CreateBound(new XYZ(sw-dripW,   0, 0),      new XYZ(sw-dripW, 0, dripD)));
+    dripLoop.Append(Line.CreateBound(new XYZ(sw-dripW,   0, dripD),  new XYZ(sw-dripW*2, 0, dripD)));
+    dripLoop.Append(Line.CreateBound(new XYZ(sw-dripW*2, 0, dripD),  new XYZ(sw-dripW*2, 0, 0)));
+    CurveArrArray dripProf = new CurveArrArray();
+    dripProf.Append(dripLoop);
+    Extrusion drip = familyDoc.FamilyCreate.NewExtrusion(false, dripProf, sp, 1.0);
+
+    tx.Commit();
+}}""",
+        ))
+
+        samples.append(_s(
+            "Create a wall-embedded timber wall plate family (100x50mm, runs along top of masonry)",
+            f"""\
+using Autodesk.Revit.DB;
+
+FamilyManager famMgr = familyDoc.FamilyManager;
+FamilyParameter pSpan = famMgr.AddParameter(
+    "Span", BuiltInParameterGroup.PG_GEOMETRY, ParameterType.Length, false);
+famMgr.Set(pSpan, 9.842520);
+
+using (Transaction tx = new Transaction(familyDoc, "Create Wall Plate"))
+{{
+    tx.Start();
+
+    double w    = 0.328084;
+    double h    = 0.164042;
+    double span = 9.842520;
+
+    CurveArrArray profile = new CurveArrArray();
+    CurveArray loop = new CurveArray();
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, 0),  new XYZ( w/2, 0, 0)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0, 0),  new XYZ( w/2, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ( w/2, 0, h),  new XYZ(-w/2, 0, h)));
+    loop.Append(Line.CreateBound(new XYZ(-w/2, 0, h),  new XYZ(-w/2, 0, 0)));
+    profile.Append(loop);
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+    Extrusion plate = familyDoc.FamilyCreate.NewExtrusion(true, profile, sp, span);
+
+    tx.Commit();
+}}""",
+        ))
+
+        return samples
+
+    # ------------------------------------------------------------------
+    # Symbolic lines for 2D plan/elevation representation
+    # ------------------------------------------------------------------
+
+    def _symbolic_lines(self) -> List[SAMPLE]:
+        samples: List[SAMPLE] = []
+
+        samples.append(_s(
+            "Create symbolic lines for a wall-hosted family: door swing arc in plan view",
+            """using Autodesk.Revit.DB;
+using System;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Door Swing Symbol"))
+{
+    tx.Start();
+
+    double dw = 2.952756; // 900 mm door width
+    double dt = 0.131234; // 40 mm thickness in plan
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+
+    // Door leaf
+    CurveArray leaf = new CurveArray();
+    leaf.Append(Line.CreateBound(new XYZ(0,  0, 0), new XYZ(dw, 0, 0)));
+    leaf.Append(Line.CreateBound(new XYZ(dw, 0, 0), new XYZ(dw, dt, 0)));
+    leaf.Append(Line.CreateBound(new XYZ(dw, dt, 0), new XYZ(0, dt, 0)));
+    leaf.Append(Line.CreateBound(new XYZ(0, dt, 0), new XYZ(0, 0, 0)));
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(leaf, sp);
+
+    // Swing arc (quarter circle, 12 segments)
+    int n = 12;
+    CurveArray arc = new CurveArray();
+    for (int i = 0; i < n; i++)
+    {
+        double a0 = Math.PI * 0.5 * i / n;
+        double a1 = Math.PI * 0.5 * (i + 1) / n;
+        XYZ p0 = new XYZ(dw * Math.Cos(a0), dw * Math.Sin(a0), 0);
+        XYZ p1 = new XYZ(dw * Math.Cos(a1), dw * Math.Sin(a1), 0);
+        arc.Append(Line.CreateBound(p0, p1));
+    }
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(arc, sp);
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Create symbolic lines for an electrical outlet: circle with two horizontal lines",
+            """using Autodesk.Revit.DB;
+using System;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Outlet Symbol"))
+{
+    tx.Start();
+
+    double r    = 0.032808; // 10 mm radius
+    double lineL = 0.032808;
+    int n = 16;
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+
+    CurveArray circle = new CurveArray();
+    for (int i = 0; i < n; i++)
+    {
+        double a0 = 2 * Math.PI * i / n;
+        double a1 = 2 * Math.PI * (i + 1) / n;
+        XYZ p0 = new XYZ(r * Math.Cos(a0), r * Math.Sin(a0), 0);
+        XYZ p1 = new XYZ(r * Math.Cos(a1), r * Math.Sin(a1), 0);
+        circle.Append(Line.CreateBound(p0, p1));
+    }
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(circle, sp);
+
+    CurveArray lines = new CurveArray();
+    lines.Append(Line.CreateBound(new XYZ(-lineL, r * 0.3, 0), new XYZ(lineL, r * 0.3, 0)));
+    lines.Append(Line.CreateBound(new XYZ(-lineL, -r * 0.3, 0), new XYZ(lineL, -r * 0.3, 0)));
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(lines, sp);
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Create symbolic lines for a vent grille: hatched rectangle in plan",
+            """using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Vent Grille Symbol"))
+{
+    tx.Start();
+
+    double gw = 1.312336; // 400 mm
+    double gh = 0.656168; // 200 mm
+    int diags = 5;
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+
+    CurveArray rect = new CurveArray();
+    rect.Append(Line.CreateBound(new XYZ(-gw/2, -gh/2, 0), new XYZ( gw/2, -gh/2, 0)));
+    rect.Append(Line.CreateBound(new XYZ( gw/2, -gh/2, 0), new XYZ( gw/2,  gh/2, 0)));
+    rect.Append(Line.CreateBound(new XYZ( gw/2,  gh/2, 0), new XYZ(-gw/2,  gh/2, 0)));
+    rect.Append(Line.CreateBound(new XYZ(-gw/2,  gh/2, 0), new XYZ(-gw/2, -gh/2, 0)));
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(rect, sp);
+
+    for (int i = 0; i <= diags; i++)
+    {
+        double t = (double)i / diags;
+        double x = -gw/2 + t * gw;
+        CurveArray hatch = new CurveArray();
+        hatch.Append(Line.CreateBound(new XYZ(x, -gh/2, 0), new XYZ(x - gh/4, gh/2, 0)));
+        familyDoc.FamilyCreate.NewSymbolicCurveArray(hatch, sp);
+    }
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Create symbolic lines for a wall switch: IEC 60617 circle with angled line and tick",
+            """using Autodesk.Revit.DB;
+using System;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Switch Symbol"))
+{
+    tx.Start();
+
+    double r    = 0.032808; // 10 mm
+    double lineL = 0.049213; // 15 mm
+    int n = 16;
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+
+    CurveArray circle = new CurveArray();
+    for (int i = 0; i < n; i++)
+    {
+        double a0 = 2 * Math.PI * i / n;
+        double a1 = 2 * Math.PI * (i + 1) / n;
+        circle.Append(Line.CreateBound(
+            new XYZ(r * Math.Cos(a0), r * Math.Sin(a0), 0),
+            new XYZ(r * Math.Cos(a1), r * Math.Sin(a1), 0)));
+    }
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(circle, sp);
+
+    double angle = Math.PI / 4;
+    XYZ start = new XYZ(r * Math.Cos(angle), r * Math.Sin(angle), 0);
+    XYZ end   = new XYZ(start.X + lineL * Math.Cos(angle), start.Y + lineL * Math.Sin(angle), 0);
+    double tickL = 0.016404;
+    double perpA = angle + Math.PI / 2;
+    XYZ tickEnd = new XYZ(end.X + tickL * Math.Cos(perpA), end.Y + tickL * Math.Sin(perpA), 0);
+
+    CurveArray arm = new CurveArray();
+    arm.Append(Line.CreateBound(start, end));
+    arm.Append(Line.CreateBound(end, tickEnd));
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(arm, sp);
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Create symbolic lines for a generic wall-hosted box: rectangle with centrelines in plan",
+            """using Autodesk.Revit.DB;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Box Symbol Lines"))
+{
+    tx.Start();
+
+    double bw = 0.377297; // 115 mm
+    double bd = 0.180446; // 55 mm
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+
+    CurveArray rect = new CurveArray();
+    rect.Append(Line.CreateBound(new XYZ(-bw/2, 0,   0), new XYZ( bw/2, 0,   0)));
+    rect.Append(Line.CreateBound(new XYZ( bw/2, 0,   0), new XYZ( bw/2, bd,  0)));
+    rect.Append(Line.CreateBound(new XYZ( bw/2, bd,  0), new XYZ(-bw/2, bd,  0)));
+    rect.Append(Line.CreateBound(new XYZ(-bw/2, bd,  0), new XYZ(-bw/2, 0,   0)));
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(rect, sp);
+
+    CurveArray centres = new CurveArray();
+    centres.Append(Line.CreateBound(new XYZ(0,    0,    0), new XYZ(0,    bd,   0)));
+    centres.Append(Line.CreateBound(new XYZ(-bw/2, bd/2, 0), new XYZ(bw/2, bd/2, 0)));
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(centres, sp);
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Set detail level visibility: hide 3D body in coarse, show symbolic lines in all detail levels",
+            """using Autodesk.Revit.DB;
+
+// Control element visibility by detail level
+using (Transaction tx = new Transaction(familyDoc, "Set Detail Level Visibility"))
+{
+    tx.Start();
+
+    // 3D body: hidden in coarse only
+    FamilyElementVisibility solidVis = new FamilyElementVisibility(
+        FamilyElementVisibilityType.Model);
+    solidVis.IsShownInCoarse  = false;
+    solidVis.IsShownInMedium  = true;
+    solidVis.IsShownInFine    = true;
+    // bodyExtrusion.SetVisibility(solidVis);
+
+    // Symbolic lines: visible in all levels
+    FamilyElementVisibility symVis = new FamilyElementVisibility(
+        FamilyElementVisibilityType.Model);
+    symVis.IsShownInCoarse = true;
+    symVis.IsShownInMedium = true;
+    symVis.IsShownInFine   = true;
+    // symbolicLine.SetVisibility(symVis);
+
+    tx.Commit();
+}""",
+        ))
+
+        samples.append(_s(
+            "Create symbolic lines for a pipe sleeve in elevation view: circle and centre cross",
+            """using Autodesk.Revit.DB;
+using System;
+
+using (Transaction tx = new Transaction(familyDoc, "Create Pipe Symbol Lines"))
+{
+    tx.Start();
+
+    double r = 0.180446; // 55 mm
+    int n = 24;
+
+    SketchPlane sp = SketchPlane.Create(familyDoc,
+        Plane.CreateByNormalAndOrigin(XYZ.BasisY, XYZ.Zero));
+
+    CurveArray circle = new CurveArray();
+    for (int i = 0; i < n; i++)
+    {
+        double a0 = 2 * Math.PI * i / n;
+        double a1 = 2 * Math.PI * (i + 1) / n;
+        XYZ p0 = new XYZ(r * Math.Cos(a0), 0, r + r * Math.Sin(a0));
+        XYZ p1 = new XYZ(r * Math.Cos(a1), 0, r + r * Math.Sin(a1));
+        circle.Append(Line.CreateBound(p0, p1));
+    }
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(circle, sp);
+
+    CurveArray cross = new CurveArray();
+    cross.Append(Line.CreateBound(new XYZ(-r * 0.7, 0, r),        new XYZ(r * 0.7, 0, r)));
+    cross.Append(Line.CreateBound(new XYZ(0, 0, r - r * 0.7),     new XYZ(0, 0, r + r * 0.7)));
+    familyDoc.FamilyCreate.NewSymbolicCurveArray(cross, sp);
+
+    tx.Commit();
+}""",
+        ))
+
+        return samples

@@ -19,22 +19,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from training_pipeline.generators.family_geometry_generator import FamilyGeometryGenerator
 from training_pipeline.generators.family_parameter_generator import FamilyParameterGenerator
+from training_pipeline.generators.family_type_generator import FamilyTypeGenerator
 from training_pipeline.generators.gdt_annotation_generator import GDTAnnotationGenerator
 from training_pipeline.generators.reference_constraint_generator import ReferenceConstraintGenerator
-from training_pipeline.generators.family_type_generator import FamilyTypeGenerator
 from training_pipeline.generators.dynamo_script_generator import DynamoScriptGenerator
-from training_pipeline.generators.building_code_compliance_generator import BuildingCodeComplianceGenerator
-from training_pipeline.generators.wall_family_generator import WallFamilyGenerator
 from training_pipeline.generators.structural_family_generator import StructuralFamilyGenerator
-from training_pipeline.generators.mep_family_generator import MEPFamilyGenerator
 from training_pipeline.generators.advanced_family_generator import AdvancedFamilyGenerator
+from training_pipeline.generators.wall_family_generator import WallFamilyGenerator
 from training_pipeline.generators.revit_api_reference_generator import RevitAPIReferenceGenerator
+from training_pipeline.generators.building_code_compliance_generator import BuildingCodeComplianceGenerator
+from training_pipeline.generators.mep_family_generator import MEPFamilyGenerator
 from training_pipeline.parameterization_data_generator import ParameterizationDataGenerator
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 SAMPLE = Dict[str, Any]
+
 
 
 # ---------------------------------------------------------------------------
