@@ -8,14 +8,15 @@
 # What this does:
 #   1. Merges LoRA adapter back into base weights (full bf16 model)
 #   2. Converts to GGUF Q4_K_M with llama.cpp
-#   3. Registers with local Ollama as "revit-coder:30b"
+#   3. Registers with local Ollama as "revit-family-engine:v2"
+#      (does NOT overwrite :latest -- promote manually after probe re-test)
 
 set -e
 
 ADAPTER_DIR="/root/revit-training/output/revit-qwen3-coder-qlora"
-MERGED_DIR="/root/revit-training/output/merged-bf16"
-GGUF_DIR="/root/revit-training/output/gguf"
-MODEL_NAME="revit-coder:30b"
+MERGED_DIR="/root/revit-training/output/merged-bf16-v2"
+GGUF_DIR="/root/revit-training/output/gguf-v2"
+MODEL_NAME="revit-family-engine:v2"
 MODELFILE_SRC="/mnt/c/Users/JordanEhrig/Documents/GitHub/revit-family-engine/Modelfile"
 
 export PATH=/root/miniconda3/envs/axolotl/bin:/root/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -58,16 +59,16 @@ mkdir -p "$GGUF_DIR"
 echo "  Converting to f16 GGUF first..."
 python convert_hf_to_gguf.py \
     "$MERGED_DIR" \
-    --outfile "$GGUF_DIR/revit-coder-30b-f16.gguf" \
+    --outfile "$GGUF_DIR/revit-family-engine-v2-f16.gguf" \
     --outtype f16
 
 echo "  Quantizing to Q4_K_M..."
 ./llama-quantize \
-    "$GGUF_DIR/revit-coder-30b-f16.gguf" \
-    "$GGUF_DIR/revit-coder-30b-Q4_K_M.gguf" \
+    "$GGUF_DIR/revit-family-engine-v2-f16.gguf" \
+    "$GGUF_DIR/revit-family-engine-v2-Q4_K_M.gguf" \
     Q4_K_M
 
-echo "[OK] GGUF saved to $GGUF_DIR/revit-coder-30b-Q4_K_M.gguf"
+echo "[OK] GGUF saved to $GGUF_DIR/revit-family-engine-v2-Q4_K_M.gguf"
 
 echo ""
 echo "================================================================"
@@ -77,7 +78,7 @@ echo "================================================================"
 # Write local Modelfile pointing at the GGUF
 MODELFILE_LOCAL="$GGUF_DIR/Modelfile"
 cat > "$MODELFILE_LOCAL" << 'MODELFILEEOF'
-FROM /root/revit-training/output/gguf/revit-coder-30b-Q4_K_M.gguf
+FROM /root/revit-training/output/gguf-v2/revit-family-engine-v2-Q4_K_M.gguf
 
 SYSTEM """You are an expert Revit family creation AI. Generate precise, compilable C# code using the Revit API for parametric family geometry, parameters, constraints, and type management.
 
@@ -101,13 +102,18 @@ MODELFILEEOF
 
 # Run ollama from Windows side via PowerShell (Ollama runs on Windows, not WSL2)
 echo "  Registering $MODEL_NAME with Ollama on Windows host..."
-powershell.exe -Command "ollama create revit-coder:30b -f '$MODELFILE_LOCAL'"
+powershell.exe -Command "ollama create $MODEL_NAME -f '$MODELFILE_LOCAL'"
 
 echo ""
 echo "[OK] Done. Test with:"
-echo "     ollama run revit-coder:30b"
+echo "     ollama run $MODEL_NAME"
 echo ""
 echo "  Adapter:       $LATEST_CKPT"
 echo "  Merged bf16:   $MERGED_DIR"
-echo "  GGUF Q4_K_M:   $GGUF_DIR/revit-coder-30b-Q4_K_M.gguf"
+echo "  GGUF Q4_K_M:   $GGUF_DIR/revit-family-engine-v2-Q4_K_M.gguf"
 echo "  Ollama model:  $MODEL_NAME"
+echo ""
+echo "  NOTE: Registered as :v2, not :latest. The prior model"
+echo "        revit-family-engine:latest remains the production baseline."
+echo "        After the probe re-test confirms improvement, promote with:"
+echo "          ollama cp $MODEL_NAME revit-family-engine:latest"
