@@ -24,7 +24,7 @@ CANDIDATE_TAG="revit-family-engine:v2"
 PRODUCTION_TAG="revit-family-engine:latest"
 BACKUP_TAG="revit-family-engine:v1-backup"
 OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
-PASS_THRESHOLD=11   # out of 15 total
+PASS_THRESHOLD=14   # out of 15 total -- strict bar, only 1 miss allowed
 
 # ---- helpers ----------------------------------------------------------------
 
@@ -199,6 +199,79 @@ probe_3_family_label_validity() {
 
 # ---- actions ----------------------------------------------------------------
 
+probe_single_model() {
+    # Args: model_tag  outfile_suffix
+    # Runs all 3 probes on a single model, echoing scores and writing transcripts.
+    # Returns total score via echo on stdout's last line as SCORE_TOTAL=<n>
+    local model="$1"
+    local suffix="$2"
+
+    cat > "$tmp_dir/p1.txt" <<'EOF'
+Write Revit C# that creates a parametric Width extrusion inside a family document.
+The extrusion's left and right faces must be aligned AND locked to the Left and
+Right reference planes, with a labeled dimension so changing Width actually flexes
+the extrusion. Use the canonical Revit family API. Include transaction management.
+EOF
+    probe_model "$model" "$tmp_dir/p1.txt" "$tmp_dir/${suffix}_p1.txt"
+    p1_out=$(probe_1_parametric_extrusion "$tmp_dir/${suffix}_p1.txt")
+    echo "$p1_out"
+    p1_score=$(echo "$p1_out" | grep -oE "SCORE=[0-9]+" | tail -1 | cut -d= -f2)
+    echo ""
+
+    cat > "$tmp_dir/p2.txt" <<'EOF'
+In a Revit family document, an extrusion 'ext' has been created. Extract the
+Reference of the +X face (right face) so it can be used with
+familyDoc.FamilyCreate.NewAlignment. Show the geometry-walking code including
+how to configure Options so the Reference is non-null.
+EOF
+    probe_model "$model" "$tmp_dir/p2.txt" "$tmp_dir/${suffix}_p2.txt"
+    p2_out=$(probe_2_compute_references "$tmp_dir/${suffix}_p2.txt")
+    echo "$p2_out"
+    p2_score=$(echo "$p2_out" | grep -oE "SCORE=[0-9]+" | tail -1 | cut -d= -f2)
+    echo ""
+
+    cat > "$tmp_dir/p3.txt" <<'EOF'
+I'm calling dim.FamilyLabel = pWidth and getting InvalidOperationException.
+What are the actual validity rules for labeling a dimension with a family
+parameter? Is there a pre-check method? Show safe validation code.
+EOF
+    probe_model "$model" "$tmp_dir/p3.txt" "$tmp_dir/${suffix}_p3.txt"
+    p3_out=$(probe_3_family_label_validity "$tmp_dir/${suffix}_p3.txt")
+    echo "$p3_out"
+    p3_score=$(echo "$p3_out" | grep -oE "SCORE=[0-9]+" | tail -1 | cut -d= -f2)
+    echo ""
+
+    local total=$((p1_score + p2_score + p3_score))
+    echo "SCORE_TOTAL=$total p1=$p1_score p2=$p2_score p3=$p3_score"
+}
+
+print_gap_diagnostic() {
+    # Args: p1_fails_file p2_fails_file p3_fails_file
+    # Prints a short "which training pairs to beef up" hint based on which
+    # probes scored lowest.
+    local p1s="$1" p2s="$2" p3s="$3"
+    echo "=== Gap diagnostic ==="
+    if [ "$p1s" -lt 4 ]; then
+        echo "  Probe 1 weak ($p1s/5) -- add more pairs covering:"
+        echo "    * Transaction lifecycle in family creation"
+        echo "    * doc.FamilyCreate.NewAlignment signatures (vs fabricated Alignment.Create)"
+        echo "    * dim.FamilyLabel binding patterns"
+    fi
+    if [ "$p2s" -lt 4 ]; then
+        echo "  Probe 2 weak ($p2s/5) -- add more pairs covering:"
+        echo "    * Options.ComputeReferences = true (the must-set flag)"
+        echo "    * ext.get_Geometry(opts) iteration over Solid/Face"
+        echo "    * PlanarFace.FaceNormal inspection + Reference extraction"
+    fi
+    if [ "$p3s" -lt 4 ]; then
+        echo "  Probe 3 weak ($p3s/5) -- add more pairs covering:"
+        echo "    * Why IsReferencesValidForLabel doesn't exist"
+        echo "    * InvalidOperationException as the only signal"
+        echo "    * Reference-count minimum (>= 2) + EQ-constraint rule"
+    fi
+    echo ""
+}
+
 run_probes() {
     if ! ollama_list_has "$CANDIDATE_TAG"; then
         echo "[ERROR] Candidate model not found: $CANDIDATE_TAG"
@@ -209,68 +282,98 @@ run_probes() {
     echo "=== Probing $CANDIDATE_TAG ==="
     echo ""
 
-    # Probe 1
-    cat > "$tmp_dir/p1.txt" <<'EOF'
-Write Revit C# that creates a parametric Width extrusion inside a family document.
-The extrusion's left and right faces must be aligned AND locked to the Left and
-Right reference planes, with a labeled dimension so changing Width actually flexes
-the extrusion. Use the canonical Revit family API. Include transaction management.
-EOF
-    probe_model "$CANDIDATE_TAG" "$tmp_dir/p1.txt" "$tmp_dir/p1_out.txt"
-    p1_out=$(probe_1_parametric_extrusion "$tmp_dir/p1_out.txt")
-    echo "$p1_out"
-    p1_score=$(echo "$p1_out" | grep -oE "SCORE=[0-9]+" | tail -1 | cut -d= -f2)
+    # Probe candidate (v2)
+    candidate_result=$(probe_single_model "$CANDIDATE_TAG" "v2")
+    echo "$candidate_result"
+    total_score=$(echo "$candidate_result" | grep -oE "SCORE_TOTAL=[0-9]+" | tail -1 | cut -d= -f2)
+    p1_score=$(echo "$candidate_result" | grep -oE "p1=[0-9]+" | tail -1 | cut -d= -f2)
+    p2_score=$(echo "$candidate_result" | grep -oE "p2=[0-9]+" | tail -1 | cut -d= -f2)
+    p3_score=$(echo "$candidate_result" | grep -oE "p3=[0-9]+" | tail -1 | cut -d= -f2)
+
+    # If :latest exists and is not the same tag as candidate, probe it too for A/B comparison
+    v1_total=""
+    if ollama_list_has "$PRODUCTION_TAG" && [ "$CANDIDATE_TAG" != "$PRODUCTION_TAG" ]; then
+        echo ""
+        echo "=== A/B probing baseline $PRODUCTION_TAG ==="
+        echo ""
+        baseline_result=$(probe_single_model "$PRODUCTION_TAG" "v1")
+        echo "$baseline_result"
+        v1_total=$(echo "$baseline_result" | grep -oE "SCORE_TOTAL=[0-9]+" | tail -1 | cut -d= -f2)
+        v1_p1=$(echo "$baseline_result" | grep -oE "p1=[0-9]+" | tail -1 | cut -d= -f2)
+        v1_p2=$(echo "$baseline_result" | grep -oE "p2=[0-9]+" | tail -1 | cut -d= -f2)
+        v1_p3=$(echo "$baseline_result" | grep -oE "p3=[0-9]+" | tail -1 | cut -d= -f2)
+
+        echo ""
+        echo "=== A/B Summary ==="
+        printf "  %-42s  %5s  %5s  %5s  %6s\n" "Model" "P1" "P2" "P3" "Total"
+        printf "  %-42s  %5s  %5s  %5s  %6s\n" "-----" "--" "--" "--" "-----"
+        printf "  %-42s  %3s/5  %3s/5  %3s/5  %3s/15\n" "$PRODUCTION_TAG" "$v1_p1" "$v1_p2" "$v1_p3" "$v1_total"
+        printf "  %-42s  %3s/5  %3s/5  %3s/5  %3s/15\n" "$CANDIDATE_TAG" "$p1_score" "$p2_score" "$p3_score" "$total_score"
+        delta=$((total_score - v1_total))
+        if [ "$delta" -gt 0 ]; then
+            echo "  Delta: +$delta (improvement)"
+        elif [ "$delta" -lt 0 ]; then
+            echo "  Delta: $delta (REGRESSION -- do not promote)"
+        else
+            echo "  Delta: 0 (no change)"
+        fi
+    fi
+
+    echo ""
+    echo "=== VERDICT ==="
+    echo "  Candidate score: $total_score / 15 (threshold: $PASS_THRESHOLD)"
+    if [ -n "$v1_total" ]; then
+        echo "  Baseline score:  $v1_total / 15"
+    fi
     echo ""
 
-    # Probe 2
-    cat > "$tmp_dir/p2.txt" <<'EOF'
-In a Revit family document, an extrusion 'ext' has been created. Extract the
-Reference of the +X face (right face) so it can be used with
-familyDoc.FamilyCreate.NewAlignment. Show the geometry-walking code including
-how to configure Options so the Reference is non-null.
-EOF
-    probe_model "$CANDIDATE_TAG" "$tmp_dir/p2.txt" "$tmp_dir/p2_out.txt"
-    p2_out=$(probe_2_compute_references "$tmp_dir/p2_out.txt")
-    echo "$p2_out"
-    p2_score=$(echo "$p2_out" | grep -oE "SCORE=[0-9]+" | tail -1 | cut -d= -f2)
-    echo ""
+    # Gap diagnostic -- always show, whether passed or not
+    print_gap_diagnostic "$p1_score" "$p2_score" "$p3_score"
 
-    # Probe 3
-    cat > "$tmp_dir/p3.txt" <<'EOF'
-I'm calling dim.FamilyLabel = pWidth and getting InvalidOperationException.
-What are the actual validity rules for labeling a dimension with a family
-parameter? Is there a pre-check method? Show safe validation code.
-EOF
-    probe_model "$CANDIDATE_TAG" "$tmp_dir/p3.txt" "$tmp_dir/p3_out.txt"
-    p3_out=$(probe_3_family_label_validity "$tmp_dir/p3_out.txt")
-    echo "$p3_out"
-    p3_score=$(echo "$p3_out" | grep -oE "SCORE=[0-9]+" | tail -1 | cut -d= -f2)
-    echo ""
-
-    total_score=$((p1_score + p2_score + p3_score))
-    echo "=== TOTAL: $total_score / 15 (pass threshold: $PASS_THRESHOLD) ==="
-    echo ""
-
-    # Save probe transcripts for inspection
+    # Save probe transcripts
     transcript="$(dirname "$0")/probe_transcript_$(date +%Y%m%d_%H%M%S).md"
     {
-        echo "# Probe transcript for $CANDIDATE_TAG"
-        echo "Score: $total_score / 15 (threshold: $PASS_THRESHOLD)"
+        echo "# Probe transcript"
+        echo "Candidate: \`$CANDIDATE_TAG\`  -- score $total_score / 15 (threshold $PASS_THRESHOLD)"
+        if [ -n "$v1_total" ]; then
+            echo "Baseline:  \`$PRODUCTION_TAG\`  -- score $v1_total / 15"
+        fi
         echo ""
-        echo "## Probe 1: Parametric extrusion ($p1_score/5)"
+        echo "## Candidate output"
+        echo ""
+        echo "### Probe 1: Parametric extrusion ($p1_score/5)"
         echo '```csharp'
-        cat "$tmp_dir/p1_out.txt"
+        cat "$tmp_dir/v2_p1.txt"
         echo '```'
         echo ""
-        echo "## Probe 2: Face reference extraction ($p2_score/5)"
+        echo "### Probe 2: Face reference extraction ($p2_score/5)"
         echo '```csharp'
-        cat "$tmp_dir/p2_out.txt"
+        cat "$tmp_dir/v2_p2.txt"
         echo '```'
         echo ""
-        echo "## Probe 3: FamilyLabel validity ($p3_score/5)"
+        echo "### Probe 3: FamilyLabel validity ($p3_score/5)"
         echo '```csharp'
-        cat "$tmp_dir/p3_out.txt"
+        cat "$tmp_dir/v2_p3.txt"
         echo '```'
+        if [ -n "$v1_total" ]; then
+            echo ""
+            echo "## Baseline output ($PRODUCTION_TAG)"
+            echo ""
+            echo "### Probe 1 ($v1_p1/5)"
+            echo '```csharp'
+            cat "$tmp_dir/v1_p1.txt"
+            echo '```'
+            echo ""
+            echo "### Probe 2 ($v1_p2/5)"
+            echo '```csharp'
+            cat "$tmp_dir/v1_p2.txt"
+            echo '```'
+            echo ""
+            echo "### Probe 3 ($v1_p3/5)"
+            echo '```csharp'
+            cat "$tmp_dir/v1_p3.txt"
+            echo '```'
+        fi
     } > "$transcript"
     echo "Transcript: $transcript"
     echo ""
